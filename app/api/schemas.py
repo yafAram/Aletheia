@@ -3,7 +3,25 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, examples=["Hola Aletheia"])
+    use_memory: bool = Field(default=True)
 
 
 class ChatResponse(BaseModel):
     response: str
+    model: str
+    latency_ms: int
+    memory_items: int
+
+class MemoryItemResponse(BaseModel):
+    id: str
+    text: str
+    metadata: dict
+    created_at: str
+
+class MemoryListResponse(BaseModel):
+    items: list[MemoryItemResponse]
+    total: int
+
+class MemoryClearResponse(BaseModel):
+    status: str
+    deleted_items: int
