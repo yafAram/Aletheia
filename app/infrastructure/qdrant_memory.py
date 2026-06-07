@@ -1,5 +1,3 @@
-import hashlib
-import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -7,14 +5,15 @@ from uuid import uuid4
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 
-from app.domain.contracts import MemoryRepository
+from app.domain.contracts import EmbeddingGateway, MemoryRepository
 
 
 @dataclass(slots=True)
 class QdrantMemoryRepository(MemoryRepository):
     url: str
     collection_name: str
-    vector_size: int = 64
+    embedding_gateway: EmbeddingGateway
+    vector_size: int = 768
 
     def __post_init__(self) -> None:
         self.client = AsyncQdrantClient(url=self.url)
@@ -44,6 +43,7 @@ class QdrantMemoryRepository(MemoryRepository):
 
         item_id = str(uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
+        vector = await self.embedding_gateway.embed(text)
 
         payload = {
             "id": item_id,
@@ -57,13 +57,40 @@ class QdrantMemoryRepository(MemoryRepository):
             points=[
                 models.PointStruct(
                     id=item_id,
-                    vector=self._build_temporary_vector(text),
+                    vector=vector,
                     payload=payload,
                 )
             ],
         )
 
         return item_id
+
+    async def search_similar(self, query: str, limit: int = 8) -> list[dict]:
+        await self.initialize()
+
+        if limit <= 0:
+            limit = 8
+
+        vector = await self.embedding_gateway.embed(query)
+
+        results = await self.client.search(
+            collection_name=self.collection_name,
+            query_vector=vector,
+            limit=limit,
+            with_payload=True,
+        )
+
+        items: list[dict] = []
+
+        for result in results:
+            if not result.payload:
+                continue
+
+            payload = dict(result.payload)
+            payload["score"] = float(result.score)
+            items.append(payload)
+
+        return items
 
     async def list_items(self, limit: int = 20) -> list[dict]:
         await self.initialize()
@@ -108,32 +135,3 @@ class QdrantMemoryRepository(MemoryRepository):
 
         self._initialized = False
         await self.initialize()
-
-    def _build_temporary_vector(self, text: str) -> list[float]:
-        """Vector temporal para poder persistir en Qdrant.
-
-        Este NO es embedding semántico todavía.
-        En el siguiente paso será reemplazado por embeddings reales.
-        """
-
-        clean_text = text.strip().lower().encode("utf-8")
-        seed = hashlib.blake2b(clean_text, digest_size=64).digest()
-
-        values: list[float] = []
-
-        while len(values) < self.vector_size:
-            for byte in seed:
-                value = (byte / 255.0) * 2.0 - 1.0
-                values.append(value)
-
-                if len(values) == self.vector_size:
-                    break
-
-            seed = hashlib.blake2b(seed, digest_size=64).digest()
-
-        norm = math.sqrt(sum(value * value for value in values))
-
-        if norm == 0:
-            return values
-
-        return [value / norm for value in values]

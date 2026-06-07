@@ -12,10 +12,11 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = "http://ollama:11434"
     ollama_model: str = "llama3.2:3b"
+    ollama_embedding_model: str = "nomic-embed-text"
 
     qdrant_url: str = "http://qdrant:6333"
     qdrant_collection: str = "aletheia_memory"
-    qdrant_vector_size: int = 64
+    qdrant_vector_size: int = 768
 
     model_config = SettingsConfigDict(
         env_file=".env",

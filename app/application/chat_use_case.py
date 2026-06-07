@@ -62,7 +62,8 @@ class ChatUseCase:
         memory_context = ""
 
         if self.memory and use_memory:
-            memory_context = await self._build_memory_context()
+            memory_context = await self._build_memory_context(clean_message)
+
             await self.memory.save_text(
                 clean_message,
                 {
@@ -99,11 +100,11 @@ class ChatUseCase:
             emotion_state=self._emotion_state(),
         )
 
-    async def _build_memory_context(self) -> str:
+    async def _build_memory_context(self, query: str) -> str:
         if not self.memory:
             return ""
 
-        items = await self.memory.list_items(limit=20)
+        items = await self.memory.search_similar(query=query, limit=10)
 
         if not items:
             return ""
@@ -114,18 +115,25 @@ class ChatUseCase:
             metadata = item.get("metadata", {})
             source = metadata.get("source", "unknown")
             text = item.get("text", "")
+            score = item.get("score", 0)
 
             if not text:
                 continue
 
             if source == "user":
-                lines.append(f"Usuario dijo: {text}")
+                lines.append(
+                    f"Recuerdo del usuario: {text} | relevancia: {score:.3f}"
+                )
             elif source == "assistant":
-                lines.append(f"Aletheia respondió: {text}")
+                lines.append(
+                    f"Respuesta previa de Aletheia: {text} | relevancia: {score:.3f}"
+                )
             else:
-                lines.append(text)
+                lines.append(
+                    f"Recuerdo: {text} | relevancia: {score:.3f}"
+                )
 
-        return "\n".join(lines[-20:])
+        return "\n".join(lines)
 
     def _build_system_prompt(self, memory_context: str) -> str:
         emotional_prompt = ""

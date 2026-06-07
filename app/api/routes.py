@@ -13,6 +13,7 @@ from app.domain.contracts import MemoryRepository
 from app.infrastructure.ollama_client import OllamaClient
 from app.infrastructure.qdrant_memory import QdrantMemoryRepository
 from app.modules.emotion_engine import EmotionEngine
+from app.infrastructure.ollama_embedding_client import OllamaEmbeddingClient
 
 router = APIRouter(prefix="/api", tags=["Aletheia"])
 
@@ -26,9 +27,15 @@ def get_memory_repository(
     global _memory_repository
 
     if _memory_repository is None:
+        embedding_gateway = OllamaEmbeddingClient(
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_embedding_model,
+        )
+
         _memory_repository = QdrantMemoryRepository(
             url=settings.qdrant_url,
             collection_name=settings.qdrant_collection,
+            embedding_gateway=embedding_gateway,
             vector_size=settings.qdrant_vector_size,
         )
 
