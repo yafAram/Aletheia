@@ -11,6 +11,8 @@ class ChatResponse(BaseModel):
     model: str
     latency_ms: int
     memory_items: int
+    emotion_state: dict
+
 
 class MemoryItemResponse(BaseModel):
     id: str
@@ -18,10 +20,21 @@ class MemoryItemResponse(BaseModel):
     metadata: dict
     created_at: str
 
+
 class MemoryListResponse(BaseModel):
     items: list[MemoryItemResponse]
     total: int
 
+
 class MemoryClearResponse(BaseModel):
     status: str
     deleted_items: int
+
+
+class EmotionStateResponse(BaseModel):
+    mood: str
+    affection: float
+    trust: float
+    stress: float
+    curiosity: float
+    energy: float

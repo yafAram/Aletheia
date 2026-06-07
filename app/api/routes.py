@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from app.api.schemas import (
     ChatRequest,
     ChatResponse,
+    EmotionStateResponse,
     MemoryClearResponse,
     MemoryListResponse,
 )
@@ -11,10 +12,12 @@ from app.core.config import Settings, get_settings
 from app.domain.contracts import MemoryRepository
 from app.infrastructure.ollama_client import OllamaClient
 from app.infrastructure.qdrant_memory import QdrantMemoryRepository
+from app.modules.emotion_engine import EmotionEngine
 
 router = APIRouter(prefix="/api", tags=["Aletheia"])
 
 _memory_repository: QdrantMemoryRepository | None = None
+_emotion_engine = EmotionEngine()
 
 
 def get_memory_repository(
@@ -32,16 +35,25 @@ def get_memory_repository(
     return _memory_repository
 
 
+def get_emotion_engine() -> EmotionEngine:
+    return _emotion_engine
+
+
 def get_chat_use_case(
     settings: Settings = Depends(get_settings),
     memory: MemoryRepository = Depends(get_memory_repository),
+    emotion_engine: EmotionEngine = Depends(get_emotion_engine),
 ) -> ChatUseCase:
     llm = OllamaClient(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
     )
 
-    return ChatUseCase(llm=llm, memory=memory)
+    return ChatUseCase(
+        llm=llm,
+        memory=memory,
+        emotion_engine=emotion_engine,
+    )
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -60,6 +72,7 @@ async def chat(
         model=settings.ollama_model,
         latency_ms=result.latency_ms,
         memory_items=result.memory_items,
+        emotion_state=result.emotion_state,
     )
 
 
@@ -85,3 +98,10 @@ async def clear_memory(
         status="memory_cleared",
         deleted_items=deleted_items,
     )
+
+
+@router.get("/emotion", response_model=EmotionStateResponse)
+async def get_emotion_state(
+    emotion_engine: EmotionEngine = Depends(get_emotion_engine),
+) -> EmotionStateResponse:
+    return EmotionStateResponse(**emotion_engine.state.as_dict())
