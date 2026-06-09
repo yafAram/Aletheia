@@ -13,6 +13,11 @@ class ChatResponse(BaseModel):
     memory_items: int
     emotion_state: dict
     personality_state: dict
+    self_state: dict
+    relationship_state: dict
+    significant_memory_count: int
+    bond_state: dict
+    bond_event_count: int
 
 
 class MemoryItemResponse(BaseModel):
@@ -56,3 +61,39 @@ class PersonalityStateResponse(BaseModel):
 class PersonalityResetResponse(BaseModel):
     status: str
     personality: PersonalityStateResponse
+
+
+class AletheiaSelfResponse(BaseModel):
+    self_model: dict
+    relationships: dict
+    significant_memories: list[dict]
+
+
+class AletheiaSelfResetResponse(BaseModel):
+    status: str
+    state: AletheiaSelfResponse
+
+
+class SignificantMemoryListResponse(BaseModel):
+    items: list[dict]
+    total: int
+
+
+class RelationshipListResponse(BaseModel):
+    relationships: dict
+    total: int
+
+
+class BondStateResponse(BaseModel):
+    bonds: dict
+    events: list[dict]
+
+
+class BondResetResponse(BaseModel):
+    status: str
+    state: BondStateResponse
+
+
+class BondEventsResponse(BaseModel):
+    items: list[dict]
+    total: int
