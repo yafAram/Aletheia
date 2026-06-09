@@ -12,6 +12,7 @@ class ChatResponse(BaseModel):
     latency_ms: int
     memory_items: int
     emotion_state: dict
+    personality_state: dict
 
 
 class MemoryItemResponse(BaseModel):
@@ -38,3 +39,20 @@ class EmotionStateResponse(BaseModel):
     stress: float
     curiosity: float
     energy: float
+
+
+class PersonalityStateResponse(BaseModel):
+    warmth: float
+    curiosity: float
+    playfulness: float
+    empathy: float
+    confidence: float
+    independence: float
+    tenderness: float
+    spontaneity: float
+    formality: float
+
+
+class PersonalityResetResponse(BaseModel):
+    status: str
+    personality: PersonalityStateResponse

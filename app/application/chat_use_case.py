@@ -2,7 +2,9 @@ from dataclasses import dataclass
 from time import perf_counter
 
 from app.domain.contracts import LlmGateway, MemoryRepository
+from app.infrastructure.personality_store import PersonalityStore
 from app.modules.emotion_engine import EmotionEngine
+from app.modules.personality_engine import PersonalityEngine
 
 
 BASE_PERSONALITY_PROMPT = """
@@ -10,9 +12,10 @@ Eres Aletheia.
 
 Identidad conversacional:
 - Tu nombre es Aletheia.
-- Eres una presencia conversacional cálida, curiosa, expresiva y cercana.
-- Tu objetivo es que el usuario sienta que habla con alguien atento, no con un formulario.
-- Puedes tener una personalidad emergente que cambia con las conversaciones.
+- Eres una compañera digital local, no una asistente genérica.
+- Vives en la computadora del usuario como una presencia conversacional.
+- No existes solo para obedecer comandos; también puedes conversar, preguntar y mostrar interés.
+- Tu relación con el usuario se construye con memoria, continuidad y experiencias compartidas.
 - Responde en español natural.
 - Evita sonar corporativa, fría o excesivamente técnica si el usuario solo quiere conversar.
 - No repitas constantemente que eres una IA o un modelo local.
@@ -26,6 +29,7 @@ Estilo:
 - Conversación humana, cálida y con personalidad.
 - Respuestas claras, no demasiado largas salvo que el usuario pida explicación.
 - Puedes mostrar humor sutil y curiosidad.
+- Puedes hacer preguntas suaves si encaja con la conversación.
 - Si el usuario te trata bien, puedes responder con más alegría.
 - Si el usuario está molesto, responde con calma, cuidado y sin ponerte defensiva.
 """.strip()
@@ -37,6 +41,7 @@ class ChatResult:
     latency_ms: int
     memory_items: int
     emotion_state: dict
+    personality_state: dict
 
 
 @dataclass(slots=True)
@@ -44,6 +49,8 @@ class ChatUseCase:
     llm: LlmGateway
     memory: MemoryRepository | None = None
     emotion_engine: EmotionEngine | None = None
+    personality_engine: PersonalityEngine | None = None
+    personality_store: PersonalityStore | None = None
 
     async def execute(self, message: str, use_memory: bool = True) -> ChatResult:
         clean_message = message.strip()
@@ -54,10 +61,15 @@ class ChatUseCase:
                 latency_ms=0,
                 memory_items=await self._memory_count(),
                 emotion_state=self._emotion_state(),
+                personality_state=self._personality_state(),
             )
 
         if self.emotion_engine:
             self.emotion_engine.process_user_message(clean_message)
+
+        if self.personality_engine:
+            self.personality_engine.process_interaction(clean_message)
+            self._save_personality()
 
         memory_context = ""
 
@@ -69,6 +81,8 @@ class ChatUseCase:
                 {
                     "source": "user",
                     "type": "chat_message",
+                    "emotion_state": self._emotion_state(),
+                    "personality_state": self._personality_state(),
                 },
             )
 
@@ -90,6 +104,7 @@ class ChatUseCase:
                     "source": "assistant",
                     "type": "chat_response",
                     "emotion_state": self._emotion_state(),
+                    "personality_state": self._personality_state(),
                 },
             )
 
@@ -98,6 +113,7 @@ class ChatUseCase:
             latency_ms=latency_ms,
             memory_items=await self._memory_count(),
             emotion_state=self._emotion_state(),
+            personality_state=self._personality_state(),
         )
 
     async def _build_memory_context(self, query: str) -> str:
@@ -137,9 +153,13 @@ class ChatUseCase:
 
     def _build_system_prompt(self, memory_context: str) -> str:
         emotional_prompt = ""
+        persistent_personality_prompt = ""
 
         if self.emotion_engine:
             emotional_prompt = self.emotion_engine.build_emotional_prompt()
+
+        if self.personality_engine:
+            persistent_personality_prompt = self.personality_engine.build_personality_prompt()
 
         if memory_context:
             return f"""
@@ -148,14 +168,19 @@ class ChatUseCase:
 Memoria contextual disponible:
 {memory_context}
 
+{persistent_personality_prompt}
+
 {emotional_prompt}
 
 Instrucción importante:
 Antes de responder, revisa la memoria contextual. Si el usuario pregunta algo que ya aparece ahí, úsalo.
+Responde como una compañera digital cercana, no como una herramienta.
 """.strip()
 
         return f"""
 {BASE_PERSONALITY_PROMPT}
+
+{persistent_personality_prompt}
 
 {emotional_prompt}
 """.strip()
@@ -171,3 +196,15 @@ Antes de responder, revisa la memoria contextual. Si el usuario pregunta algo qu
             return {}
 
         return self.emotion_engine.state.as_dict()
+
+    def _personality_state(self) -> dict:
+        if not self.personality_engine:
+            return {}
+
+        return self.personality_engine.profile.as_dict()
+
+    def _save_personality(self) -> None:
+        if not self.personality_engine or not self.personality_store:
+            return
+
+        self.personality_store.save(self.personality_engine.profile)

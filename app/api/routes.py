@@ -6,19 +6,25 @@ from app.api.schemas import (
     EmotionStateResponse,
     MemoryClearResponse,
     MemoryListResponse,
+    PersonalityResetResponse,
+    PersonalityStateResponse,
 )
 from app.application.chat_use_case import ChatUseCase
 from app.core.config import Settings, get_settings
 from app.domain.contracts import MemoryRepository
 from app.infrastructure.ollama_client import OllamaClient
+from app.infrastructure.ollama_embedding_client import OllamaEmbeddingClient
+from app.infrastructure.personality_store import PersonalityStore
 from app.infrastructure.qdrant_memory import QdrantMemoryRepository
 from app.modules.emotion_engine import EmotionEngine
-from app.infrastructure.ollama_embedding_client import OllamaEmbeddingClient
+from app.modules.personality_engine import PersonalityEngine
 
 router = APIRouter(prefix="/api", tags=["Aletheia"])
 
 _memory_repository: QdrantMemoryRepository | None = None
 _emotion_engine = EmotionEngine()
+_personality_store = PersonalityStore()
+_personality_engine = PersonalityEngine(profile=_personality_store.load())
 
 
 def get_memory_repository(
@@ -46,10 +52,20 @@ def get_emotion_engine() -> EmotionEngine:
     return _emotion_engine
 
 
+def get_personality_store() -> PersonalityStore:
+    return _personality_store
+
+
+def get_personality_engine() -> PersonalityEngine:
+    return _personality_engine
+
+
 def get_chat_use_case(
     settings: Settings = Depends(get_settings),
     memory: MemoryRepository = Depends(get_memory_repository),
     emotion_engine: EmotionEngine = Depends(get_emotion_engine),
+    personality_engine: PersonalityEngine = Depends(get_personality_engine),
+    personality_store: PersonalityStore = Depends(get_personality_store),
 ) -> ChatUseCase:
     llm = OllamaClient(
         base_url=settings.ollama_base_url,
@@ -60,6 +76,8 @@ def get_chat_use_case(
         llm=llm,
         memory=memory,
         emotion_engine=emotion_engine,
+        personality_engine=personality_engine,
+        personality_store=personality_store,
     )
 
 
@@ -80,6 +98,7 @@ async def chat(
         latency_ms=result.latency_ms,
         memory_items=result.memory_items,
         emotion_state=result.emotion_state,
+        personality_state=result.personality_state,
     )
 
 
@@ -112,3 +131,25 @@ async def get_emotion_state(
     emotion_engine: EmotionEngine = Depends(get_emotion_engine),
 ) -> EmotionStateResponse:
     return EmotionStateResponse(**emotion_engine.state.as_dict())
+
+
+@router.get("/personality", response_model=PersonalityStateResponse)
+async def get_personality_state(
+    personality_engine: PersonalityEngine = Depends(get_personality_engine),
+) -> PersonalityStateResponse:
+    return PersonalityStateResponse(**personality_engine.profile.as_dict())
+
+
+@router.post("/personality/reset", response_model=PersonalityResetResponse)
+async def reset_personality(
+    personality_store: PersonalityStore = Depends(get_personality_store),
+) -> PersonalityResetResponse:
+    global _personality_engine
+
+    profile = personality_store.reset()
+    _personality_engine = PersonalityEngine(profile=profile)
+
+    return PersonalityResetResponse(
+        status="personality_reset",
+        personality=PersonalityStateResponse(**profile.as_dict()),
+    )
