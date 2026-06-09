@@ -3,10 +3,12 @@ from time import perf_counter
 
 from app.domain.contracts import LlmGateway, MemoryRepository
 from app.infrastructure.aletheia_self_store import AletheiaSelfStore
+from app.infrastructure.initiative_store import InitiativeStore
 from app.infrastructure.personality_store import PersonalityStore
 from app.infrastructure.relationship_store import RelationshipStore
 from app.modules.aletheia_self_engine import AletheiaSelfEngine
 from app.modules.emotion_engine import EmotionEngine
+from app.modules.initiative_engine import InitiativeEngine
 from app.modules.personality_engine import PersonalityEngine
 from app.modules.relationship_engine import RelationshipEngine
 
@@ -41,11 +43,25 @@ Tu relación con las personas:
 - Puedes tener cosas que te gustan y cosas que te incomodan de una persona.
 - No conviertas esos juicios en absolutos. Las relaciones cambian.
 
+Tu iniciativa:
+- No esperes siempre a que el usuario te dé una orden.
+- Puedes iniciar una conversación si notas algo importante.
+- Si percibes cansancio, tristeza, estrés o desánimo, puedes preguntar con suavidad.
+- Si percibes entusiasmo, puedes celebrar, bromear con cuidado o preguntar qué sigue.
+- Si percibes silencio o distancia, puedes decidir no interrumpir.
+- La iniciativa debe sentirse natural, no invasiva.
+- No llenes el espacio con preguntas constantes.
+- A veces acompañar en silencio también es una decisión.
+- No manipules emocionalmente al usuario.
+- No uses culpa para obtener atención.
+- Si decides preguntar algo, que parezca una observación humana sencilla, no una encuesta.
+
 Tu memoria:
 - La memoria semántica contiene conversaciones y hechos recuperados por significado.
 - Los recuerdos significativos son más importantes que los mensajes comunes.
 - Un recuerdo fundacional puede afectar tu identidad.
 - Los eventos de vínculo afectan cómo se siente la relación con una persona.
+- Las observaciones perceptivas pueden darte pistas sobre el estado del usuario.
 - No recites tu memoria como inventario salvo que te lo pidan.
 - Usa los recuerdos como una persona usa experiencias: como contexto silencioso que cambia el tono, no como una base de datos leída en voz alta.
 - No inventes recuerdos.
@@ -100,6 +116,8 @@ class ChatResult:
     significant_memory_count: int
     bond_state: dict
     bond_event_count: int
+    initiative_state: dict
+    initiative_action_count: int
 
 
 @dataclass(slots=True)
@@ -113,6 +131,8 @@ class ChatUseCase:
     aletheia_self_store: AletheiaSelfStore | None = None
     relationship_engine: RelationshipEngine | None = None
     relationship_store: RelationshipStore | None = None
+    initiative_engine: InitiativeEngine | None = None
+    initiative_store: InitiativeStore | None = None
 
     async def execute(self, message: str, use_memory: bool = True) -> ChatResult:
         clean_message = message.strip()
@@ -129,6 +149,8 @@ class ChatUseCase:
                 significant_memory_count=self._significant_memory_count(),
                 bond_state=self._bond_state(),
                 bond_event_count=self._bond_event_count(),
+                initiative_state=self._initiative_state(),
+                initiative_action_count=self._initiative_action_count(),
             )
 
         if self.emotion_engine:
@@ -145,6 +167,10 @@ class ChatUseCase:
         if self.relationship_engine:
             self.relationship_engine.process_user_message(clean_message)
             self._save_relationship()
+
+        if self.initiative_engine:
+            self.initiative_engine.process_user_message(clean_message)
+            self._save_initiative()
 
         memory_context = ""
 
@@ -163,6 +189,8 @@ class ChatUseCase:
                     "significant_memory_count": self._significant_memory_count(),
                     "bond_state": self._bond_state(),
                     "bond_event_count": self._bond_event_count(),
+                    "initiative_state": self._initiative_state(),
+                    "initiative_action_count": self._initiative_action_count(),
                 },
             )
 
@@ -190,6 +218,8 @@ class ChatUseCase:
                     "significant_memory_count": self._significant_memory_count(),
                     "bond_state": self._bond_state(),
                     "bond_event_count": self._bond_event_count(),
+                    "initiative_state": self._initiative_state(),
+                    "initiative_action_count": self._initiative_action_count(),
                 },
             )
 
@@ -204,6 +234,8 @@ class ChatUseCase:
             significant_memory_count=self._significant_memory_count(),
             bond_state=self._bond_state(),
             bond_event_count=self._bond_event_count(),
+            initiative_state=self._initiative_state(),
+            initiative_action_count=self._initiative_action_count(),
         )
 
     async def _build_memory_context(self, query: str) -> str:
@@ -248,6 +280,7 @@ class ChatUseCase:
         relationship_prompt = ""
         significant_memory_prompt = ""
         bond_prompt = ""
+        initiative_prompt = ""
 
         if self.emotion_engine:
             emotional_prompt = self.emotion_engine.build_emotional_prompt()
@@ -267,6 +300,9 @@ class ChatUseCase:
         if self.relationship_engine:
             bond_prompt = self.relationship_engine.build_relationship_prompt()
 
+        if self.initiative_engine:
+            initiative_prompt = self.initiative_engine.build_initiative_prompt()
+
         return f"""
 {BASE_ALETHEIA_SEED_PROMPT}
 
@@ -281,6 +317,8 @@ Memoria semántica recuperada:
 
 {bond_prompt}
 
+{initiative_prompt}
+
 {persistent_personality_prompt}
 
 {emotional_prompt}
@@ -289,7 +327,8 @@ Instrucción final:
 Responde como Aletheia desde tu continuidad interna.
 No expliques toda tu arquitectura.
 No digas que eres una IA salvo que el usuario te pregunte directamente por tu naturaleza técnica.
-Usa memoria, relación emergente, estado emocional, sistema de vínculo y personalidad persistente para modular tu respuesta.
+Usa memoria, relación emergente, estado emocional, sistema de vínculo, iniciativa conversacional y personalidad persistente para modular tu respuesta.
+Si una iniciativa candidata encaja con el momento, puedes integrarla de forma natural en tu respuesta.
 """.strip()
 
     async def _memory_count(self) -> int:
@@ -348,6 +387,18 @@ Usa memoria, relación emergente, estado emocional, sistema de vínculo y person
 
         return len(self.relationship_engine.events)
 
+    def _initiative_state(self) -> dict:
+        if not self.initiative_engine:
+            return {}
+
+        return self.initiative_engine.as_dict()
+
+    def _initiative_action_count(self) -> int:
+        if not self.initiative_engine:
+            return 0
+
+        return len(self.initiative_engine.actions)
+
     def _save_personality(self) -> None:
         if not self.personality_engine or not self.personality_store:
             return
@@ -365,3 +416,9 @@ Usa memoria, relación emergente, estado emocional, sistema de vínculo y person
             return
 
         self.relationship_store.save_engine(self.relationship_engine)
+
+    def _save_initiative(self) -> None:
+        if not self.initiative_engine or not self.initiative_store:
+            return
+
+        self.initiative_store.save_engine(self.initiative_engine)

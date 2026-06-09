@@ -18,6 +18,8 @@ class ChatResponse(BaseModel):
     significant_memory_count: int
     bond_state: dict
     bond_event_count: int
+    initiative_state: dict
+    initiative_action_count: int
 
 
 class MemoryItemResponse(BaseModel):
@@ -97,3 +99,47 @@ class BondResetResponse(BaseModel):
 class BondEventsResponse(BaseModel):
     items: list[dict]
     total: int
+
+
+class PerceptionRequest(BaseModel):
+    source: str = Field(default="manual", examples=["visual", "audio", "chat", "system"])
+    text_observation: str | None = None
+    facial_expression: str | None = None
+    vocal_tone: str | None = None
+    detected_mood: str | None = None
+    energy_level: float | None = Field(default=None, ge=0.0, le=1.0)
+    stress_level: float | None = Field(default=None, ge=0.0, le=1.0)
+    engagement_level: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.50, ge=0.0, le=1.0)
+
+
+class PerceptionResponse(BaseModel):
+    observation: dict
+    generated_action: dict | None
+    initiative_state: dict
+
+
+class InitiativeStateResponse(BaseModel):
+    state: dict
+    observations: list[dict]
+    actions: list[dict]
+
+
+class InitiativeActionsResponse(BaseModel):
+    items: list[dict]
+    total: int
+
+
+class InitiativeUseActionRequest(BaseModel):
+    action_id: str | None = None
+
+
+class InitiativeUseActionResponse(BaseModel):
+    status: str
+    action: dict | None
+    state: dict
+
+
+class InitiativeResetResponse(BaseModel):
+    status: str
+    state: InitiativeStateResponse
