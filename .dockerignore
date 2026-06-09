@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment
+.env
+.venv/
+venv/
+
+# Local storage/private runtime data
+storage/*.json
+storage/audio/*
+!storage/.gitkeep
+!storage/audio/.gitkeep
+
+# Large local models
+models/vosk/*
+!models/vosk/.gitkeep
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

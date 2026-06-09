@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.api.schemas import (
     AletheiaSelfResetResponse,
@@ -22,6 +22,8 @@ from app.api.schemas import (
     PersonalityStateResponse,
     RelationshipListResponse,
     SignificantMemoryListResponse,
+    SttResponse,
+    VoiceChatResponse,
 )
 from app.application.chat_use_case import ChatUseCase
 from app.core.config import Settings, get_settings
@@ -38,6 +40,9 @@ from app.modules.emotion_engine import EmotionEngine
 from app.modules.initiative_engine import InitiativeEngine
 from app.modules.personality_engine import PersonalityEngine
 from app.modules.relationship_engine import RelationshipEngine
+from app.infrastructure.audio_store import AudioStore
+from app.modules.stt_engine import VoskSttEngine
+
 
 router = APIRouter(prefix="/api", tags=["Aletheia"])
 
@@ -56,6 +61,9 @@ _relationship_engine = _relationship_store.load_engine()
 
 _initiative_store = InitiativeStore()
 _initiative_engine = _initiative_store.load_engine()
+
+_audio_store = AudioStore()
+_stt_engine: VoskSttEngine | None = None
 
 
 def get_memory_repository(
@@ -77,6 +85,24 @@ def get_memory_repository(
         )
 
     return _memory_repository
+
+
+def get_audio_store() -> AudioStore:
+    return _audio_store
+
+
+def get_stt_engine(
+    settings: Settings = Depends(get_settings),
+) -> VoskSttEngine:
+    global _stt_engine
+
+    if _stt_engine is None:
+        _stt_engine = VoskSttEngine(
+            model_path=settings.vosk_model_path,
+            sample_rate=settings.stt_sample_rate,
+        )
+
+    return _stt_engine
 
 
 def get_emotion_engine() -> EmotionEngine:
@@ -406,3 +432,80 @@ async def reset_initiative(
             actions=data["actions"],
         ),
     )
+
+
+@router.post("/stt/transcribe", response_model=SttResponse)
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    audio_store: AudioStore = Depends(get_audio_store),
+    stt_engine: VoskSttEngine = Depends(get_stt_engine),
+) -> SttResponse:
+    try:
+        audio_path = await audio_store.save_upload(file)
+        result = stt_engine.transcribe(audio_path)
+
+        return SttResponse(
+            text=result.text,
+            confidence=result.confidence,
+            duration_seconds=result.duration_seconds,
+            words=result.words,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+@router.post("/voice/chat", response_model=VoiceChatResponse)
+async def voice_chat(
+    file: UploadFile = File(...),
+    use_memory: bool = True,
+    settings: Settings = Depends(get_settings),
+    audio_store: AudioStore = Depends(get_audio_store),
+    stt_engine: VoskSttEngine = Depends(get_stt_engine),
+    use_case: ChatUseCase = Depends(get_chat_use_case),
+) -> VoiceChatResponse:
+    try:
+        audio_path = await audio_store.save_upload(file)
+        transcription = stt_engine.transcribe(audio_path)
+
+        if not transcription.text:
+            raise HTTPException(
+                status_code=400,
+                detail="No speech was detected in the audio.",
+            )
+
+        result = await use_case.execute(
+            message=transcription.text,
+            use_memory=use_memory,
+        )
+
+        return VoiceChatResponse(
+            transcription=SttResponse(
+                text=transcription.text,
+                confidence=transcription.confidence,
+                duration_seconds=transcription.duration_seconds,
+                words=transcription.words,
+            ),
+            response=result.response,
+            model=settings.ollama_model,
+            latency_ms=result.latency_ms,
+            memory_items=result.memory_items,
+            emotion_state=result.emotion_state,
+            personality_state=result.personality_state,
+            self_state=result.self_state,
+            relationship_state=result.relationship_state,
+            significant_memory_count=result.significant_memory_count,
+            bond_state=result.bond_state,
+            bond_event_count=result.bond_event_count,
+            initiative_state=result.initiative_state,
+            initiative_action_count=result.initiative_action_count,
+        )
+
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error

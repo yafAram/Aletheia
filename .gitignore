@@ -13,3 +13,7 @@ storage/*
 !models/.gitkeep
 !storage/.gitkeep
 .DS_Store
+models/vosk/*
+!models/vosk/.gitkeep
+storage/audio/*
+!storage/audio/.gitkeep

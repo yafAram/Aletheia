@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     qdrant_collection: str = "aletheia_memory"
     qdrant_vector_size: int = 768
 
+    vosk_model_path: str = "/app/models/vosk/vosk-model-small-es-0.42"
+    stt_sample_rate: int = 16000
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

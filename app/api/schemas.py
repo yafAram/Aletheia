@@ -143,3 +143,27 @@ class InitiativeUseActionResponse(BaseModel):
 class InitiativeResetResponse(BaseModel):
     status: str
     state: InitiativeStateResponse
+
+
+class SttResponse(BaseModel):
+    text: str
+    confidence: float
+    duration_seconds: float
+    words: list[dict]
+
+
+class VoiceChatResponse(BaseModel):
+    transcription: SttResponse
+    response: str
+    model: str
+    latency_ms: int
+    memory_items: int
+    emotion_state: dict
+    personality_state: dict
+    self_state: dict
+    relationship_state: dict
+    significant_memory_count: int
+    bond_state: dict
+    bond_event_count: int
+    initiative_state: dict
+    initiative_action_count: int
