@@ -10,6 +10,9 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+
     ollama_base_url: str = "http://ollama:11434"
     ollama_model: str = "llama3.2:3b"
     ollama_embedding_model: str = "nomic-embed-text"
@@ -25,6 +28,23 @@ class Settings(BaseSettings):
     piper_config_path: str = "/app/models/piper/es_MX-claude-high.onnx.json"
     tts_output_dir: str = "/app/storage/tts"
     tts_default_emotion: str = "neutral"
+
+    # =========================
+    # LATENCY OPTIMIZATION
+    # =========================
+
+    ollama_num_predict: int = 220
+    ollama_temperature: float = 0.7
+    ollama_top_p: float = 0.9
+    ollama_num_ctx: int = 3072
+    ollama_keep_alive: str = "30m"
+
+    memory_search_limit: int = 4
+    significant_memory_prompt_limit: int = 4
+    bond_event_prompt_limit: int = 4
+    initiative_action_prompt_limit: int = 3
+
+    async_memory_persistence: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

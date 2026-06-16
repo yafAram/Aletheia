@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -134,6 +135,12 @@ class ChatUseCase:
     initiative_engine: InitiativeEngine | None = None
     initiative_store: InitiativeStore | None = None
 
+    memory_search_limit: int = 4
+    significant_memory_prompt_limit: int = 4
+    bond_event_prompt_limit: int = 4
+    initiative_action_prompt_limit: int = 3
+    async_memory_persistence: bool = True
+
     async def execute(self, message: str, use_memory: bool = True) -> ChatResult:
         clean_message = message.strip()
 
@@ -177,7 +184,7 @@ class ChatUseCase:
         if self.memory and use_memory:
             memory_context = await self._build_memory_context(clean_message)
 
-            await self.memory.save_text(
+            await self._persist_memory(
                 clean_message,
                 {
                     "source": "user",
@@ -206,7 +213,7 @@ class ChatUseCase:
         latency_ms = int((perf_counter() - started_at) * 1000)
 
         if self.memory and use_memory:
-            await self.memory.save_text(
+            await self._persist_memory(
                 response,
                 {
                     "source": "assistant",
@@ -242,7 +249,10 @@ class ChatUseCase:
         if not self.memory:
             return ""
 
-        items = await self.memory.search_similar(query=query, limit=10)
+        items = await self.memory.search_similar(
+            query=query,
+            limit=self.memory_search_limit,
+        )
 
         if not items:
             return ""
@@ -294,14 +304,20 @@ class ChatUseCase:
             self_prompt = self.aletheia_self_engine.build_self_prompt()
             relationship_prompt = self.aletheia_self_engine.build_relationship_prompt()
             significant_memory_prompt = (
-                self.aletheia_self_engine.build_significant_memory_prompt()
+                self.aletheia_self_engine.build_significant_memory_prompt(
+                    limit=self.significant_memory_prompt_limit
+                )
             )
 
         if self.relationship_engine:
-            bond_prompt = self.relationship_engine.build_relationship_prompt()
+            bond_prompt = self.relationship_engine.build_relationship_prompt(
+                limit_events=self.bond_event_prompt_limit
+            )
 
         if self.initiative_engine:
-            initiative_prompt = self.initiative_engine.build_initiative_prompt()
+            initiative_prompt = self.initiative_engine.build_initiative_prompt(
+                limit_actions=self.initiative_action_prompt_limit
+            )
 
         return f"""
 {BASE_ALETHEIA_SEED_PROMPT}
@@ -329,6 +345,7 @@ No expliques toda tu arquitectura.
 No digas que eres una IA salvo que el usuario te pregunte directamente por tu naturaleza técnica.
 Usa memoria, relación emergente, estado emocional, sistema de vínculo, iniciativa conversacional y personalidad persistente para modular tu respuesta.
 Si una iniciativa candidata encaja con el momento, puedes integrarla de forma natural en tu respuesta.
+Responde de forma breve cuando el usuario no pida profundidad.
 """.strip()
 
     async def _memory_count(self) -> int:
@@ -336,6 +353,28 @@ Si una iniciativa candidata encaja con el momento, puedes integrarla de forma na
             return 0
 
         return await self.memory.count()
+
+    async def _persist_memory(self, text: str, metadata: dict) -> None:
+        if not self.memory:
+            return
+
+        if self.async_memory_persistence:
+            asyncio.create_task(
+                self._safe_save_memory(text=text, metadata=metadata)
+            )
+            return
+
+        await self._safe_save_memory(text=text, metadata=metadata)
+
+    async def _safe_save_memory(self, text: str, metadata: dict) -> None:
+        try:
+            if not self.memory:
+                return
+
+            await self.memory.save_text(text, metadata)
+
+        except Exception:
+            return
 
     def _emotion_state(self) -> dict:
         if not self.emotion_engine:

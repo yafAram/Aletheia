@@ -180,6 +180,11 @@ def get_chat_use_case(
     llm = OllamaClient(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
+        num_predict=settings.ollama_num_predict,
+        temperature=settings.ollama_temperature,
+        top_p=settings.ollama_top_p,
+        num_ctx=settings.ollama_num_ctx,
+        keep_alive=settings.ollama_keep_alive,
     )
 
     return ChatUseCase(
@@ -194,6 +199,11 @@ def get_chat_use_case(
         relationship_store=relationship_store,
         initiative_engine=initiative_engine,
         initiative_store=initiative_store,
+        memory_search_limit=settings.memory_search_limit,
+        significant_memory_prompt_limit=settings.significant_memory_prompt_limit,
+        bond_event_prompt_limit=settings.bond_event_prompt_limit,
+        initiative_action_prompt_limit=settings.initiative_action_prompt_limit,
+        async_memory_persistence=settings.async_memory_persistence,
     )
 
 
