@@ -17,3 +17,8 @@ models/vosk/*
 !models/vosk/.gitkeep
 storage/audio/*
 !storage/audio/.gitkeep
+models/piper/*
+!models/piper/.gitkeep
+
+storage/tts/*
+!storage/tts/.gitkeep

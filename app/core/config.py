@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     vosk_model_path: str = "/app/models/vosk/vosk-model-small-es-0.42"
     stt_sample_rate: int = 16000
 
+    piper_model_path: str = "/app/models/piper/es_MX-claude-high.onnx"
+    piper_config_path: str = "/app/models/piper/es_MX-claude-high.onnx.json"
+    tts_output_dir: str = "/app/storage/tts"
+    tts_default_emotion: str = "neutral"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 
 from app.api.schemas import (
     AletheiaSelfResetResponse,
@@ -23,12 +26,16 @@ from app.api.schemas import (
     RelationshipListResponse,
     SignificantMemoryListResponse,
     SttResponse,
+    TtsRequest,
+    TtsResponse,
     VoiceChatResponse,
+    VoiceChatTtsResponse,
 )
 from app.application.chat_use_case import ChatUseCase
 from app.core.config import Settings, get_settings
 from app.domain.contracts import MemoryRepository
 from app.infrastructure.aletheia_self_store import AletheiaSelfStore
+from app.infrastructure.audio_store import AudioStore
 from app.infrastructure.initiative_store import InitiativeStore
 from app.infrastructure.ollama_client import OllamaClient
 from app.infrastructure.ollama_embedding_client import OllamaEmbeddingClient
@@ -40,8 +47,8 @@ from app.modules.emotion_engine import EmotionEngine
 from app.modules.initiative_engine import InitiativeEngine
 from app.modules.personality_engine import PersonalityEngine
 from app.modules.relationship_engine import RelationshipEngine
-from app.infrastructure.audio_store import AudioStore
 from app.modules.stt_engine import VoskSttEngine
+from app.modules.tts_engine import PiperTtsEngine
 
 
 router = APIRouter(prefix="/api", tags=["Aletheia"])
@@ -64,6 +71,7 @@ _initiative_engine = _initiative_store.load_engine()
 
 _audio_store = AudioStore()
 _stt_engine: VoskSttEngine | None = None
+_tts_engine: PiperTtsEngine | None = None
 
 
 def get_memory_repository(
@@ -103,6 +111,21 @@ def get_stt_engine(
         )
 
     return _stt_engine
+
+
+def get_tts_engine(
+    settings: Settings = Depends(get_settings),
+) -> PiperTtsEngine:
+    global _tts_engine
+
+    if _tts_engine is None:
+        _tts_engine = PiperTtsEngine(
+            model_path=settings.piper_model_path,
+            config_path=settings.piper_config_path,
+            output_dir=settings.tts_output_dir,
+        )
+
+    return _tts_engine
 
 
 def get_emotion_engine() -> EmotionEngine:
@@ -450,12 +473,14 @@ async def transcribe_audio(
             duration_seconds=result.duration_seconds,
             words=result.words,
         )
+
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except RuntimeError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
+
 
 @router.post("/voice/chat", response_model=VoiceChatResponse)
 async def voice_chat(
@@ -489,6 +514,115 @@ async def voice_chat(
                 words=transcription.words,
             ),
             response=result.response,
+            model=settings.ollama_model,
+            latency_ms=result.latency_ms,
+            memory_items=result.memory_items,
+            emotion_state=result.emotion_state,
+            personality_state=result.personality_state,
+            self_state=result.self_state,
+            relationship_state=result.relationship_state,
+            significant_memory_count=result.significant_memory_count,
+            bond_state=result.bond_state,
+            bond_event_count=result.bond_event_count,
+            initiative_state=result.initiative_state,
+            initiative_action_count=result.initiative_action_count,
+        )
+
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@router.post("/tts/speak", response_model=TtsResponse)
+async def speak_text(
+    request: TtsRequest,
+    tts_engine: PiperTtsEngine = Depends(get_tts_engine),
+) -> TtsResponse:
+    try:
+        result = tts_engine.synthesize(
+            text=request.text,
+            emotion=request.emotion,
+        )
+
+        return TtsResponse(
+            text=result.text,
+            emotion=result.emotion,
+            audio_url=f"/api/tts/audio/{result.filename}",
+            filename=result.filename,
+            voice_style=result.voice_style,
+        )
+
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@router.get("/tts/audio/{filename}")
+async def get_tts_audio(
+    filename: str,
+    settings: Settings = Depends(get_settings),
+):
+    audio_path = Path(settings.tts_output_dir) / filename
+
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail="Audio file not found.")
+
+    return FileResponse(
+        path=str(audio_path),
+        media_type="audio/wav",
+        filename=filename,
+    )
+
+
+@router.post("/voice/chat/tts", response_model=VoiceChatTtsResponse)
+async def voice_chat_with_tts(
+    file: UploadFile = File(...),
+    use_memory: bool = True,
+    settings: Settings = Depends(get_settings),
+    audio_store: AudioStore = Depends(get_audio_store),
+    stt_engine: VoskSttEngine = Depends(get_stt_engine),
+    tts_engine: PiperTtsEngine = Depends(get_tts_engine),
+    use_case: ChatUseCase = Depends(get_chat_use_case),
+) -> VoiceChatTtsResponse:
+    try:
+        audio_path = await audio_store.save_upload(file)
+        transcription = stt_engine.transcribe(audio_path)
+
+        if not transcription.text:
+            raise HTTPException(
+                status_code=400,
+                detail="No speech was detected in the audio.",
+            )
+
+        result = await use_case.execute(
+            message=transcription.text,
+            use_memory=use_memory,
+        )
+
+        tts_result = tts_engine.synthesize(
+            text=result.response,
+            emotion="auto",
+            emotion_state=result.emotion_state,
+        )
+
+        return VoiceChatTtsResponse(
+            transcription=SttResponse(
+                text=transcription.text,
+                confidence=transcription.confidence,
+                duration_seconds=transcription.duration_seconds,
+                words=transcription.words,
+            ),
+            response=result.response,
+            audio_url=f"/api/tts/audio/{tts_result.filename}",
+            audio_filename=tts_result.filename,
+            tts_emotion=tts_result.emotion,
+            voice_style=tts_result.voice_style,
             model=settings.ollama_model,
             latency_ms=result.latency_ms,
             memory_items=result.memory_items,

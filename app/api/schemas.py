@@ -167,3 +167,37 @@ class VoiceChatResponse(BaseModel):
     bond_event_count: int
     initiative_state: dict
     initiative_action_count: int
+
+
+class TtsRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    emotion: str = Field(default="auto")
+
+
+class TtsResponse(BaseModel):
+    text: str
+    emotion: str
+    audio_url: str
+    filename: str
+    voice_style: dict
+
+
+class VoiceChatTtsResponse(BaseModel):
+    transcription: SttResponse
+    response: str
+    audio_url: str
+    audio_filename: str
+    tts_emotion: str
+    voice_style: dict
+    model: str
+    latency_ms: int
+    memory_items: int
+    emotion_state: dict
+    personality_state: dict
+    self_state: dict
+    relationship_state: dict
+    significant_memory_count: int
+    bond_state: dict
+    bond_event_count: int
+    initiative_state: dict
+    initiative_action_count: int
