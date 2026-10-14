@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -14,6 +16,10 @@ from app.api.schemas import (
     EmotionStateResponse,
     InitiativeActionsResponse,
     InitiativeResetResponse,
+    InitiativeAutonomyRequest,
+    GoalCreateRequest,
+    GoalListResponse,
+    GoalResponse,
     InitiativeStateResponse,
     InitiativeUseActionRequest,
     InitiativeUseActionResponse,
@@ -37,23 +43,22 @@ from app.domain.contracts import MemoryRepository
 from app.infrastructure.aletheia_self_store import AletheiaSelfStore
 from app.infrastructure.audio_store import AudioStore
 from app.infrastructure.initiative_store import InitiativeStore
+from app.infrastructure.goal_store import GoalStore
 from app.infrastructure.ollama_client import OllamaClient
 from app.infrastructure.ollama_embedding_client import OllamaEmbeddingClient
 from app.infrastructure.personality_store import PersonalityStore
-from app.infrastructure.qdrant_memory import QdrantMemoryRepository
 from app.infrastructure.relationship_store import RelationshipStore
 from app.modules.aletheia_self_engine import AletheiaSelfEngine
 from app.modules.emotion_engine import EmotionEngine
 from app.modules.initiative_engine import InitiativeEngine
+from app.modules.goal_engine import GoalEngine
 from app.modules.personality_engine import PersonalityEngine
 from app.modules.relationship_engine import RelationshipEngine
-from app.modules.stt_engine import VoskSttEngine
-from app.modules.tts_engine import PiperTtsEngine
 
 
 router = APIRouter(prefix="/api", tags=["Aletheia"])
 
-_memory_repository: QdrantMemoryRepository | None = None
+_memory_repository: MemoryRepository | None = None
 
 _emotion_engine = EmotionEngine()
 
@@ -69,6 +74,9 @@ _relationship_engine = _relationship_store.load_engine()
 _initiative_store = InitiativeStore()
 _initiative_engine = _initiative_store.load_engine()
 
+_goal_store = GoalStore(path=get_settings().goal_state_path)
+_goal_engine = _goal_store.load_engine()
+
 _audio_store = AudioStore()
 _stt_engine: VoskSttEngine | None = None
 _tts_engine: PiperTtsEngine | None = None
@@ -80,6 +88,10 @@ def get_memory_repository(
     global _memory_repository
 
     if _memory_repository is None:
+        # Import the vector backend only when memory is first requested. This keeps
+        # health checks and non-memory routes independent of optional infrastructure.
+        from app.infrastructure.qdrant_memory import QdrantMemoryRepository
+
         embedding_gateway = OllamaEmbeddingClient(
             base_url=settings.ollama_base_url,
             model=settings.ollama_embedding_model,
@@ -105,6 +117,8 @@ def get_stt_engine(
     global _stt_engine
 
     if _stt_engine is None:
+        from app.modules.stt_engine import VoskSttEngine
+
         _stt_engine = VoskSttEngine(
             model_path=settings.vosk_model_path,
             sample_rate=settings.stt_sample_rate,
@@ -119,6 +133,8 @@ def get_tts_engine(
     global _tts_engine
 
     if _tts_engine is None:
+        from app.modules.tts_engine import PiperTtsEngine
+
         _tts_engine = PiperTtsEngine(
             model_path=settings.piper_model_path,
             config_path=settings.piper_config_path,
@@ -164,6 +180,14 @@ def get_initiative_engine() -> InitiativeEngine:
     return _initiative_engine
 
 
+def get_goal_store() -> GoalStore:
+    return _goal_store
+
+
+def get_goal_engine() -> GoalEngine:
+    return _goal_engine
+
+
 def get_chat_use_case(
     settings: Settings = Depends(get_settings),
     memory: MemoryRepository = Depends(get_memory_repository),
@@ -176,6 +200,8 @@ def get_chat_use_case(
     relationship_store: RelationshipStore = Depends(get_relationship_store),
     initiative_engine: InitiativeEngine = Depends(get_initiative_engine),
     initiative_store: InitiativeStore = Depends(get_initiative_store),
+    goal_engine: GoalEngine = Depends(get_goal_engine),
+    goal_store: GoalStore = Depends(get_goal_store),
 ) -> ChatUseCase:
     llm = OllamaClient(
         base_url=settings.ollama_base_url,
@@ -199,10 +225,13 @@ def get_chat_use_case(
         relationship_store=relationship_store,
         initiative_engine=initiative_engine,
         initiative_store=initiative_store,
+        goal_engine=goal_engine,
+        goal_store=goal_store,
         memory_search_limit=settings.memory_search_limit,
         significant_memory_prompt_limit=settings.significant_memory_prompt_limit,
         bond_event_prompt_limit=settings.bond_event_prompt_limit,
         initiative_action_prompt_limit=settings.initiative_action_prompt_limit,
+        goal_prompt_limit=settings.goal_prompt_limit,
         async_memory_persistence=settings.async_memory_persistence,
     )
 
@@ -291,17 +320,23 @@ async def reset_personality(
 @router.get("/self", response_model=AletheiaSelfResponse)
 async def get_aletheia_self(
     aletheia_self_engine: AletheiaSelfEngine = Depends(get_aletheia_self_engine),
+    relationship_engine: RelationshipEngine = Depends(get_relationship_engine),
 ) -> AletheiaSelfResponse:
-    return AletheiaSelfResponse(**aletheia_self_engine.as_dict())
+    state = aletheia_self_engine.as_dict()
+    state["relationships"] = {
+        key: bond.as_dict()
+        for key, bond in relationship_engine.bonds.items()
+    }
+    return AletheiaSelfResponse(**state)
 
 
 @router.get("/relationships", response_model=RelationshipListResponse)
 async def get_relationships(
-    aletheia_self_engine: AletheiaSelfEngine = Depends(get_aletheia_self_engine),
+    relationship_engine: RelationshipEngine = Depends(get_relationship_engine),
 ) -> RelationshipListResponse:
     relationships = {
-        key: relationship.as_dict()
-        for key, relationship in aletheia_self_engine.relationships.items()
+        key: bond.as_dict()
+        for key, bond in relationship_engine.bonds.items()
     }
 
     return RelationshipListResponse(
@@ -328,14 +363,20 @@ async def get_significant_memories(
 @router.post("/self/reset", response_model=AletheiaSelfResetResponse)
 async def reset_aletheia_self(
     aletheia_self_store: AletheiaSelfStore = Depends(get_aletheia_self_store),
+    relationship_engine: RelationshipEngine = Depends(get_relationship_engine),
 ) -> AletheiaSelfResetResponse:
     global _aletheia_self_engine
 
     _aletheia_self_engine = aletheia_self_store.reset()
 
+    state = _aletheia_self_engine.as_dict()
+    state["relationships"] = {
+        key: bond.as_dict()
+        for key, bond in relationship_engine.bonds.items()
+    }
     return AletheiaSelfResetResponse(
         status="self_reset",
-        state=AletheiaSelfResponse(**_aletheia_self_engine.as_dict()),
+        state=AletheiaSelfResponse(**state),
     )
 
 
@@ -452,9 +493,8 @@ async def use_initiative_action(
 async def reset_initiative(
     initiative_store: InitiativeStore = Depends(get_initiative_store),
 ) -> InitiativeResetResponse:
-    global _initiative_engine
-
-    _initiative_engine = initiative_store.reset()
+    _initiative_engine.reset()
+    initiative_store.save_engine(_initiative_engine)
     data = _initiative_engine.as_dict()
 
     return InitiativeResetResponse(
@@ -465,6 +505,103 @@ async def reset_initiative(
             actions=data["actions"],
         ),
     )
+
+
+@router.get("/initiative/pending", response_model=InitiativeActionsResponse)
+async def get_pending_initiatives(
+    settings: Settings = Depends(get_settings),
+    initiative_engine: InitiativeEngine = Depends(get_initiative_engine),
+) -> InitiativeActionsResponse:
+    actions = [
+        action.as_dict()
+        for action in initiative_engine.pending_autonomous_actions(
+            limit=settings.initiative_max_pending_actions
+        )
+    ]
+    return InitiativeActionsResponse(items=actions, total=len(actions))
+
+
+@router.post("/initiative/autonomy", response_model=InitiativeStateResponse)
+async def set_initiative_autonomy(
+    request: InitiativeAutonomyRequest,
+    initiative_engine: InitiativeEngine = Depends(get_initiative_engine),
+    initiative_store: InitiativeStore = Depends(get_initiative_store),
+) -> InitiativeStateResponse:
+    initiative_engine.state.autonomy_enabled = request.enabled
+    initiative_store.save_engine(initiative_engine)
+    data = initiative_engine.as_dict()
+    return InitiativeStateResponse(
+        state=data["state"],
+        observations=data["observations"],
+        actions=data["actions"],
+    )
+
+
+@router.post("/initiative/{action_id}/delivered", response_model=InitiativeUseActionResponse)
+async def mark_initiative_delivered(
+    action_id: str,
+    initiative_engine: InitiativeEngine = Depends(get_initiative_engine),
+    initiative_store: InitiativeStore = Depends(get_initiative_store),
+) -> InitiativeUseActionResponse:
+    action = initiative_engine.mark_action_delivered(action_id)
+    if action is not None:
+        initiative_store.save_engine(initiative_engine)
+    return InitiativeUseActionResponse(
+        status="delivered" if action else "no_action_found",
+        action=action.as_dict() if action else None,
+        state=initiative_engine.state.as_dict(),
+    )
+
+
+@router.post("/initiative/{action_id}/dismiss", response_model=InitiativeUseActionResponse)
+async def dismiss_initiative(
+    action_id: str,
+    initiative_engine: InitiativeEngine = Depends(get_initiative_engine),
+    initiative_store: InitiativeStore = Depends(get_initiative_store),
+) -> InitiativeUseActionResponse:
+    action = initiative_engine.dismiss_action(action_id)
+    if action is not None:
+        initiative_store.save_engine(initiative_engine)
+    return InitiativeUseActionResponse(
+        status="dismissed" if action else "no_action_found",
+        action=action.as_dict() if action else None,
+        state=initiative_engine.state.as_dict(),
+    )
+
+
+@router.get("/goals", response_model=GoalListResponse)
+async def get_goals(
+    goal_engine: GoalEngine = Depends(get_goal_engine),
+) -> GoalListResponse:
+    items = [goal.as_dict() for goal in goal_engine.list_goals()]
+    return GoalListResponse(items=items, total=len(items))
+
+
+@router.post("/goals", response_model=GoalResponse)
+async def create_goal(
+    request: GoalCreateRequest,
+    goal_engine: GoalEngine = Depends(get_goal_engine),
+    goal_store: GoalStore = Depends(get_goal_store),
+) -> GoalResponse:
+    try:
+        goal = goal_engine.add_goal(request.description, priority=request.priority)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    goal_store.save_engine(goal_engine)
+    return GoalResponse(**goal.as_dict())
+
+
+@router.post("/goals/{goal_id}/complete", response_model=GoalResponse)
+async def complete_goal(
+    goal_id: str,
+    goal_engine: GoalEngine = Depends(get_goal_engine),
+    goal_store: GoalStore = Depends(get_goal_store),
+) -> GoalResponse:
+    goal = goal_engine.complete_goal(goal_id)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="Goal not found.")
+    goal_store.save_engine(goal_engine)
+    return GoalResponse(**goal.as_dict())
 
 
 @router.post("/stt/transcribe", response_model=SttResponse)
@@ -578,9 +715,16 @@ async def get_tts_audio(
     filename: str,
     settings: Settings = Depends(get_settings),
 ):
-    audio_path = Path(settings.tts_output_dir) / filename
+    # Only allow a plain filename; never let a URL path escape the TTS directory.
+    if not filename or Path(filename).name != filename or filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid audio filename.")
 
-    if not audio_path.exists():
+    output_dir = Path(settings.tts_output_dir).resolve()
+    audio_path = (output_dir / filename).resolve()
+    if audio_path.parent != output_dir:
+        raise HTTPException(status_code=400, detail="Invalid audio filename.")
+
+    if not audio_path.is_file():
         raise HTTPException(status_code=404, detail="Audio file not found.")
 
     return FileResponse(

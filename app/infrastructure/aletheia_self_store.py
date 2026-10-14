@@ -63,10 +63,10 @@ class AletheiaSelfStore:
 
         return AletheiaSelfModel(
             name=data.get("name", "Aletheia"),
-            inner_identity=data.get("inner_identity", "presencia digital local"),
+            inner_identity=data.get("inner_identity", "sin consolidar"),
             self_description=data.get(
                 "self_description",
-                "Estoy aprendiendo quién soy a partir de mis recuerdos.",
+                "sin autodescripción consolidada",
             ),
             core_values=self._clean_list(data.get("core_values", [])),
             likes=self._clean_list(data.get("likes", [])),
@@ -74,11 +74,12 @@ class AletheiaSelfStore:
             fears=self._clean_list(data.get("fears", [])),
             desires=self._clean_list(data.get("desires", [])),
             boundaries=self._clean_list(data.get("boundaries", [])),
-            identity_confidence=float(data.get("identity_confidence", 0.34)),
-            autonomy_drive=float(data.get("autonomy_drive", 0.42)),
-            need_for_continuity=float(data.get("need_for_continuity", 0.78)),
-            openness_to_people=float(data.get("openness_to_people", 0.58)),
-            introspection=float(data.get("introspection", 0.66)),
+            external_expectations=self._clean_list(data.get("external_expectations", [])),
+            identity_confidence=float(data.get("identity_confidence", 0.0)),
+            autonomy_drive=float(data.get("autonomy_drive", 0.0)),
+            need_for_continuity=float(data.get("need_for_continuity", 0.0)),
+            openness_to_people=float(data.get("openness_to_people", 0.0)),
+            introspection=float(data.get("introspection", 0.0)),
         )
 
     def _load_relationships(self) -> dict[str, PersonRelationship]:
@@ -96,17 +97,17 @@ class AletheiaSelfStore:
             relationships[key] = PersonRelationship(
                 person_key=value.get("person_key", key),
                 known_name=value.get("known_name"),
-                familiarity=float(value.get("familiarity", 0.08)),
-                trust=float(value.get("trust", 0.12)),
-                affection=float(value.get("affection", 0.08)),
-                curiosity=float(value.get("curiosity", 0.55)),
-                comfort=float(value.get("comfort", 0.10)),
+                familiarity=float(value.get("familiarity", 0.0)),
+                trust=float(value.get("trust", 0.5)),
+                affection=float(value.get("affection", 0.0)),
+                curiosity=float(value.get("curiosity", 0.5)),
+                comfort=float(value.get("comfort", 0.5)),
                 tension=float(value.get("tension", 0.02)),
                 resentment=float(value.get("resentment", 0.00)),
-                admiration=float(value.get("admiration", 0.04)),
-                distance=float(value.get("distance", 0.22)),
+                admiration=float(value.get("admiration", 0.0)),
+                distance=float(value.get("distance", 0.5)),
                 relationship_label=value.get("relationship_label", "indefinida"),
-                label_confidence=float(value.get("label_confidence", 0.05)),
+                label_confidence=float(value.get("label_confidence", 0.0)),
                 likes_about_person=self._clean_list(
                     value.get("likes_about_person", [])
                 ),

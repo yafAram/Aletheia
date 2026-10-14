@@ -201,3 +201,30 @@ class VoiceChatTtsResponse(BaseModel):
     bond_event_count: int
     initiative_state: dict
     initiative_action_count: int
+
+
+class InitiativeAutonomyRequest(BaseModel):
+    enabled: bool
+
+
+class GoalCreateRequest(BaseModel):
+    description: str = Field(..., min_length=3, max_length=180)
+    priority: float = Field(default=0.6, ge=0.0, le=1.0)
+
+
+class GoalResponse(BaseModel):
+    id: str
+    description: str
+    status: str
+    source: str
+    priority: float
+    confidence: float
+    created_at: str
+    updated_at: str
+    last_mentioned_at: str
+    last_check_in_at: str | None = None
+
+
+class GoalListResponse(BaseModel):
+    items: list[GoalResponse]
+    total: int

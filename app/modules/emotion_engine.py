@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum
 
+from app.core.text_normalization import normalize_text
+
 
 class Mood(str, Enum):
     NEUTRAL = "neutral"
@@ -14,12 +16,12 @@ class Mood(str, Enum):
 
 @dataclass(slots=True)
 class EmotionalState:
-    mood: Mood = Mood.WARM
-    affection: float = 0.50
+    mood: Mood = Mood.NEUTRAL
+    affection: float = 0.0
     trust: float = 0.50
-    stress: float = 0.10
-    curiosity: float = 0.45
-    energy: float = 0.70
+    stress: float = 0.0
+    curiosity: float = 0.50
+    energy: float = 0.50
 
     def as_dict(self) -> dict:
         return {
@@ -43,25 +45,20 @@ class EmotionEngine:
         self.state = EmotionalState()
 
     def process_user_message(self, message: str) -> EmotionalState:
-        text = message.lower()
+        text = normalize_text(message)
 
         positive_words = [
-            "gracias",
-            "perfecto",
-            "excelente",
-            "bien hecho",
-            "me gusta",
             "te quiero",
-            "eres genial",
-            "muy bien",
-            "bonita",
-            "increíble",
-            "felicidades",
+            "me caes bien",
+            "me encanta hablar contigo",
+            "me gusta hablar contigo",
+            "te aprecio",
+            "me alegra hablar contigo",
         ]
 
         negative_words = [
             "mal",
-            "pésimo",
+            "pesimo",
             "odio",
             "tonta",
             "inútil",
@@ -76,7 +73,7 @@ class EmotionEngine:
         stress_words = [
             "rápido",
             "urgente",
-            "estrés",
+            "estres",
             "estresado",
             "ansioso",
             "preocupado",
@@ -121,24 +118,17 @@ class EmotionEngine:
         return self.state
 
     def build_emotional_prompt(self) -> str:
+        """Serialize heuristic affect estimates without prescribing behavior."""
         state = self.state
-
-        return f"""
-Estado emocional simulado de Aletheia:
-- ánimo actual: {state.mood.value}
-- afecto hacia el usuario: {state.affection:.2f}
-- confianza: {state.trust:.2f}
-- estrés: {state.stress:.2f}
-- curiosidad: {state.curiosity:.2f}
-- energía: {state.energy:.2f}
-
-Cómo debe influir:
-- Si el afecto es alto, responde con más calidez y cercanía.
-- Si la confianza es baja, responde con más cautela.
-- Si el estrés es alto, responde más breve y busca calmar la situación.
-- Si la curiosidad es alta, haz preguntas naturales y muestra interés.
-- Nunca digas que tienes emociones reales. Puedes expresar el estado como una vivencia simulada o una reacción conversacional.
-""".strip()
+        return f"""Affective-state estimate (heuristic, not a diagnosis):
+- mood_label={state.mood.value}
+- affection_score={state.affection:.2f}
+- trust_score={state.trust:.2f}
+- stress_score={state.stress:.2f}
+- curiosity_score={state.curiosity:.2f}
+- energy_score={state.energy:.2f}
+- evidence_source=keyword-based interaction heuristic
+- confidence=not calibrated""".strip()
 
     def _resolve_mood(self) -> None:
         state = self.state

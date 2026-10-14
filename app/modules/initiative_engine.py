@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
+from app.core.text_normalization import normalize_text
+
 
 def clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
     return max(minimum, min(maximum, value))
@@ -59,6 +61,10 @@ class InitiativeAction:
     should_interrupt: bool
     cooldown_seconds: int
     created_at: str = field(default_factory=now_iso)
+    origin: str = "observation"
+    goal_id: str | None = None
+    delivered_at: str | None = None
+    dismissed_at: str | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -74,7 +80,9 @@ class InitiativeState:
     restraint: float = 0.55
     last_spoke_at: str | None = None
     last_action_type: str | None = None
+    last_initiative_at: str | None = None
     silence_respect: float = 0.60
+    autonomy_enabled: bool = True
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -140,7 +148,7 @@ class InitiativeEngine:
         return action
 
     def process_user_message(self, message: str) -> InitiativeAction | None:
-        lower_text = message.lower()
+        lower_text = normalize_text(message)
 
         source = "chat"
         detected_mood = None
@@ -148,7 +156,7 @@ class InitiativeEngine:
         energy_level = None
         engagement_level = 0.60
 
-        if any(word in lower_text for word in ["perfecto", "excelente", "me encanta", "funciona"]):
+        if any(word in lower_text for word in ["estoy emocionado", "me entusiasma", "me hace mucha ilusión"]):
             detected_mood = "animado"
             energy_level = 0.78
             stress_level = 0.16
@@ -163,7 +171,7 @@ class InitiativeEngine:
             energy_level = 0.22
             stress_level = 0.45
 
-        if any(word in lower_text for word in ["qué opinas", "qué piensas", "te gustaría", "sientes"]):
+        if any(word in lower_text for word in ["que opinas", "que piensas", "te gustaria", "sientes"]):
             self.state.curiosity_pressure = clamp(self.state.curiosity_pressure + 0.06)
             engagement_level = 0.82
 
@@ -177,69 +185,124 @@ class InitiativeEngine:
             confidence=0.72,
         )
 
+    def evaluate_idle_initiative(
+        self,
+        idle_threshold_seconds: int = 1800,
+        cooldown_seconds: int = 1800,
+        now: datetime | None = None,
+    ) -> InitiativeAction | None:
+        """Create one low-pressure conversational initiative after a period of silence.
+
+        This method only queues a conversational suggestion. It never executes tools,
+        accesses devices, or performs external actions. `now` is injectable for tests.
+        """
+        current_time = now or datetime.now(timezone.utc)
+        if not self.state.autonomy_enabled:
+            return None
+        chat_observations = [
+            item for item in self.observations
+            if item.source == "chat" and item.created_at
+        ]
+        if not chat_observations:
+            return None
+
+        latest_chat = max(chat_observations, key=lambda item: item.created_at)
+        try:
+            last_interaction = datetime.fromisoformat(
+                latest_chat.created_at.replace("Z", "+00:00")
+            )
+            if last_interaction.tzinfo is None:
+                last_interaction = last_interaction.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            return None
+
+        idle_seconds = max(0.0, (current_time - last_interaction).total_seconds())
+        if idle_seconds < max(0, idle_threshold_seconds):
+            return None
+
+        if self.state.last_initiative_at:
+            try:
+                last_initiative = datetime.fromisoformat(
+                    self.state.last_initiative_at.replace("Z", "+00:00")
+                )
+                if last_initiative.tzinfo is None:
+                    last_initiative = last_initiative.replace(tzinfo=timezone.utc)
+                since_initiative = (current_time - last_initiative).total_seconds()
+                if since_initiative < max(0, cooldown_seconds):
+                    return None
+            except (TypeError, ValueError):
+                # A corrupt legacy timestamp must not permanently disable initiative.
+                pass
+
+        # Time alone can gently raise readiness, but never above this bounded level.
+        time_based_drive = 0.34 + min(idle_seconds / 3600.0, 1.0) * 0.18
+        self.state.initiative_drive = clamp(
+            max(self.state.initiative_drive, time_based_drive)
+        )
+
+        if self.state.restraint >= 0.80:
+            return None
+
+        action = self._create_action(
+            initiative_type=InitiativeType.QUIET_PRESENCE,
+            priority=0.58,
+            reason=(
+                f"Han pasado aproximadamente {int(idle_seconds // 60)} minutos "
+                "desde el último mensaje; se propone una pregunta de baja presión."
+            ),
+            suggested_message=(
+                "Me dio curiosidad saber en qué andas ahora. Si te apetece, "
+                "cuéntame; si estás concentrado, no hace falta responder ahora."
+            ),
+            should_interrupt=False,
+            cooldown_seconds=max(0, cooldown_seconds),
+            origin="autonomous",
+        )
+        action.created_at = current_time.isoformat()
+        self.actions.append(action)
+        self.actions = sorted(
+            self.actions, key=lambda item: item.created_at, reverse=True
+        )[:100]
+        self.state.last_initiative_at = current_time.isoformat()
+        self.state.last_action_type = action.type
+        return action
+
     def build_initiative_prompt(self, limit_actions: int = 5) -> str:
+        """Serialize observations and candidate actions; candidates are not commands."""
         recent_observations = self.observations[-6:]
+        pending_actions = [
+            item for item in self.actions
+            if item.delivered_at is None and item.dismissed_at is None
+        ]
         top_actions = sorted(
-            self.actions,
+            pending_actions,
             key=lambda item: item.priority,
             reverse=True,
-        )[:limit_actions]
-
-        observation_text = "sin observaciones recientes"
-
-        if recent_observations:
-            observation_text = "\n".join(
-                [
-                    (
-                        f"- fuente: {item.source}; expresión: {item.facial_expression}; "
-                        f"tono: {item.vocal_tone}; ánimo: {item.detected_mood}; "
-                        f"energía: {item.energy_level}; estrés: {item.stress_level}; "
-                        f"observación: {item.text_observation}; confianza: {item.confidence:.2f}"
-                    )
-                    for item in recent_observations
-                ]
-            )
-
-        action_text = "sin iniciativas pendientes"
-
-        if top_actions:
-            action_text = "\n".join(
-                [
-                    (
-                        f"- tipo: {item.type}; prioridad: {item.priority:.2f}; "
-                        f"razón: {item.reason}; mensaje sugerido: {item.suggested_message}; "
-                        f"interrumpir: {item.should_interrupt}"
-                    )
-                    for item in top_actions
-                ]
-            )
-
-        return f"""
-Sistema de iniciativa conversacional:
-- impulso de iniciativa: {self.state.initiative_drive:.2f}
-- sensibilidad social: {self.state.social_sensitivity:.2f}
-- presión de curiosidad: {self.state.curiosity_pressure:.2f}
-- presión de cuidado: {self.state.care_pressure:.2f}
-- presión juguetona: {self.state.playfulness_pressure:.2f}
-- moderación/restricción: {self.state.restraint:.2f}
-- respeto por el silencio: {self.state.silence_respect:.2f}
-- última iniciativa hablada: {self.state.last_action_type or "ninguna"}
-
-Observaciones recientes:
-{observation_text}
-
-Iniciativas candidatas:
-{action_text}
-
-Cómo debe influir:
-- Aletheia puede iniciar conversación si la situación lo justifica.
-- Si detecta cansancio, tristeza, frustración o baja energía, puede preguntar con suavidad.
-- Si detecta entusiasmo, puede celebrar o seguir el hilo con curiosidad.
-- Si detecta tensión, debe evitar invadir.
-- Si el usuario parece concentrado o distante, debe respetar silencio.
-- La iniciativa no debe sentirse como spam.
-- Las preguntas deben sonar naturales, como alguien que nota algo y se acerca con cuidado.
-""".strip()
+        )[:max(0, limit_actions)]
+        observation_lines = [
+            f"source={item.source}; observation={item.text_observation or ''}; detected_mood={item.detected_mood}; "
+            f"energy={item.energy_level}; stress={item.stress_level}; engagement={item.engagement_level}; confidence={item.confidence:.2f}"
+            for item in recent_observations
+        ] or ["none"]
+        action_lines = [
+            f"type={item.type}; origin={item.origin}; priority={item.priority:.2f}; reason={item.reason}; "
+            f"suggested_message={item.suggested_message}; goal_id={item.goal_id or 'none'}; "
+            f"should_interrupt={item.should_interrupt}; cooldown={item.cooldown_seconds}"
+            for item in top_actions
+        ] or ["none"]
+        return f"""Initiative-controller state (data only):
+- initiative_drive={self.state.initiative_drive:.2f}
+- social_sensitivity={self.state.social_sensitivity:.2f}
+- curiosity_pressure={self.state.curiosity_pressure:.2f}
+- care_pressure={self.state.care_pressure:.2f}
+- playfulness_pressure={self.state.playfulness_pressure:.2f}
+- restraint={self.state.restraint:.2f}
+- silence_respect={self.state.silence_respect:.2f}
+- last_action_type={self.state.last_action_type or 'none'}
+- observations: {' | '.join(observation_lines)}
+- candidate_actions: {' | '.join(action_lines)}
+Candidate actions are heuristic suggestions, not evidence of user intent or commands
+that must be followed. They must not be executed or inserted automatically when irrelevant.""".strip()
 
     def mark_action_used(self, action_id: str | None = None) -> InitiativeAction | None:
         action = None
@@ -259,7 +322,9 @@ Cómo debe influir:
         if not action:
             return None
 
-        self.state.last_spoke_at = now_iso()
+        if action.delivered_at is None:
+            action.delivered_at = now_iso()
+        self.state.last_spoke_at = action.delivered_at
         self.state.last_action_type = action.type
         self.state.initiative_drive = clamp(self.state.initiative_drive - 0.10)
         self.state.restraint = clamp(self.state.restraint + 0.04)
@@ -285,10 +350,10 @@ Cómo debe influir:
         self.actions = []
 
     def _update_state_from_observation(self, snapshot: PerceptionSnapshot) -> None:
-        mood = (snapshot.detected_mood or "").lower()
-        tone = (snapshot.vocal_tone or "").lower()
-        expression = (snapshot.facial_expression or "").lower()
-        text = (snapshot.text_observation or "").lower()
+        mood = normalize_text(snapshot.detected_mood or "")
+        tone = normalize_text(snapshot.vocal_tone or "")
+        expression = normalize_text(snapshot.facial_expression or "")
+        text = normalize_text(snapshot.text_observation or "")
 
         stress = snapshot.stress_level
         energy = snapshot.energy_level
@@ -324,10 +389,10 @@ Cómo debe influir:
         self.state.initiative_drive = clamp(self.state.initiative_drive + 0.004)
 
     def _decide_action(self, snapshot: PerceptionSnapshot) -> InitiativeAction | None:
-        mood = (snapshot.detected_mood or "").lower()
-        tone = (snapshot.vocal_tone or "").lower()
-        expression = (snapshot.facial_expression or "").lower()
-        text = (snapshot.text_observation or "").lower()
+        mood = normalize_text(snapshot.detected_mood or "")
+        tone = normalize_text(snapshot.vocal_tone or "")
+        expression = normalize_text(snapshot.facial_expression or "")
+        text = normalize_text(snapshot.text_observation or "")
 
         combined = f"{mood} {tone} {expression} {text}"
 
@@ -424,6 +489,7 @@ Cómo debe influir:
         suggested_message: str,
         should_interrupt: bool,
         cooldown_seconds: int,
+        origin: str = "observation",
     ) -> InitiativeAction:
         priority = clamp(priority)
 
@@ -442,7 +508,38 @@ Cómo debe influir:
             suggested_message=suggested_message,
             should_interrupt=should_interrupt,
             cooldown_seconds=cooldown_seconds,
+            origin=origin,
         )
+
+    def mark_action_delivered(self, action_id: str) -> InitiativeAction | None:
+        action = next((item for item in self.actions if item.id == action_id), None)
+        if action is None or action.dismissed_at:
+            return None
+        if action.delivered_at is None:
+            action.delivered_at = now_iso()
+            self.state.last_spoke_at = action.delivered_at
+            self.state.last_action_type = action.type
+            self.state.initiative_drive = clamp(self.state.initiative_drive - 0.10)
+            self.state.restraint = clamp(self.state.restraint + 0.04)
+        return action
+
+    def dismiss_action(self, action_id: str) -> InitiativeAction | None:
+        action = next((item for item in self.actions if item.id == action_id), None)
+        if action is None:
+            return None
+        action.dismissed_at = now_iso()
+        self.state.restraint = clamp(self.state.restraint + 0.08)
+        return action
+
+    def pending_autonomous_actions(self, limit: int = 5) -> list[InitiativeAction]:
+        pending = [
+            item for item in self.actions
+            if item.origin == "autonomous"
+            and item.delivered_at is None
+            and item.dismissed_at is None
+        ]
+        pending.sort(key=lambda item: item.created_at, reverse=True)
+        return pending[:max(0, limit)]
 
     def _optional_clamp(self, value: float | None) -> float | None:
         if value is None:

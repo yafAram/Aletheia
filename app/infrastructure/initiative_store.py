@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from app.modules.initiative_engine import (
     InitiativeAction,
@@ -70,7 +72,9 @@ class InitiativeStore:
             restraint=float(data.get("restraint", 0.55)),
             last_spoke_at=data.get("last_spoke_at"),
             last_action_type=data.get("last_action_type"),
+            last_initiative_at=data.get("last_initiative_at"),
             silence_respect=float(data.get("silence_respect", 0.60)),
+            autonomy_enabled=bool(data.get("autonomy_enabled", True)),
         )
 
     def _load_observations(self) -> list[PerceptionSnapshot]:
@@ -125,6 +129,10 @@ class InitiativeStore:
                     should_interrupt=bool(item.get("should_interrupt", False)),
                     cooldown_seconds=int(item.get("cooldown_seconds", 180)),
                     created_at=item.get("created_at", ""),
+                    origin=item.get("origin", "observation"),
+                    goal_id=item.get("goal_id"),
+                    delivered_at=item.get("delivered_at"),
+                    dismissed_at=item.get("dismissed_at"),
                 )
             )
 

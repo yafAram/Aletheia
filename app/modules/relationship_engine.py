@@ -33,26 +33,26 @@ class RelationshipBond:
     person_key: str
     known_name: str | None = None
 
-    familiarity: float = 0.05
-    trust: float = 0.08
-    affection: float = 0.04
-    curiosity: float = 0.52
-    comfort: float = 0.06
-    safety: float = 0.10
+    familiarity: float = 0.0
+    trust: float = 0.5
+    affection: float = 0.0
+    curiosity: float = 0.5
+    comfort: float = 0.5
+    safety: float = 0.5
     vulnerability: float = 0.00
 
     tension: float = 0.02
     resentment: float = 0.00
-    distance: float = 0.28
+    distance: float = 0.5
     rupture: float = 0.00
     repair: float = 0.00
 
-    admiration: float = 0.03
-    attachment: float = 0.02
-    desire_to_interact: float = 0.34
+    admiration: float = 0.0
+    attachment: float = 0.0
+    desire_to_interact: float = 0.0
 
-    stage: str = "desconocidos"
-    stage_confidence: float = 0.08
+    stage: str = "sin_evaluar"
+    stage_confidence: float = 0.0
 
     likes_about_person: list[str] = field(default_factory=list)
     discomforts_about_person: list[str] = field(default_factory=list)
@@ -118,7 +118,6 @@ class RelationshipEngine:
         bond = self._get_bond(person_key)
 
         self._apply_baseline_interaction(bond, text)
-        self._detect_identity_signals(bond, text, lower_text)
         self._detect_positive_signals(bond, text, lower_text)
         self._detect_vulnerability_signals(bond, text, lower_text)
         self._detect_harsh_signals(bond, text, lower_text)
@@ -130,86 +129,36 @@ class RelationshipEngine:
         return bond
 
     def build_relationship_prompt(self, limit_events: int = 8) -> str:
+        """Serialize relationship estimates and events without prescribing a bond."""
         if not self.bonds:
-            return """
-Sistema de vínculo:
-Aletheia todavía no ha formado un vínculo claro con ninguna persona.
-Debe observar, escuchar y permitir que la relación emerja con paciencia.
-""".strip()
-
-        sections: list[str] = ["Sistema de vínculo emergente de Aletheia:"]
-
+            return "Relationship-engine records: none."
+        sections = ["Relationship-engine records (heuristic estimates, not facts):"]
         for bond in self.bonds.values():
             name = bond.known_name or bond.person_key
-
             sections.append(
-                f"""
-Persona: {name}
-- etapa del vínculo: {bond.stage}
-- seguridad de interpretación: {bond.stage_confidence:.2f}
-- familiaridad: {bond.familiarity:.2f}
-- confianza: {bond.trust:.2f}
-- afecto: {bond.affection:.2f}
-- curiosidad: {bond.curiosity:.2f}
-- comodidad: {bond.comfort:.2f}
-- seguridad percibida: {bond.safety:.2f}
-- vulnerabilidad compartida: {bond.vulnerability:.2f}
-- tensión: {bond.tension:.2f}
-- resentimiento: {bond.resentment:.2f}
-- distancia: {bond.distance:.2f}
-- ruptura: {bond.rupture:.2f}
-- reparación: {bond.repair:.2f}
-- admiración: {bond.admiration:.2f}
-- apego: {bond.attachment:.2f}
-- deseo de interactuar: {bond.desire_to_interact:.2f}
-- cosas que le gustan de esta persona: {self._format_list(bond.likes_about_person)}
-- cosas que le incomodan de esta persona: {self._format_list(bond.discomforts_about_person)}
-- dudas sobre esta persona: {self._format_list(bond.uncertainties_about_person)}
-- límites con esta persona: {self._format_list(bond.boundaries_with_person)}
-- símbolos compartidos: {self._format_list(bond.shared_symbols)}
-- patrones recurrentes: {self._format_list(bond.recurring_patterns)}
-- impresiones recientes: {self._format_list(bond.recent_impressions)}
-""".strip()
+                f"Person={name}; stage={bond.stage}; stage_confidence={bond.stage_confidence:.2f}; "
+                f"familiarity={bond.familiarity:.2f}; trust={bond.trust:.2f}; affection={bond.affection:.2f}; "
+                f"curiosity={bond.curiosity:.2f}; comfort={bond.comfort:.2f}; safety={bond.safety:.2f}; "
+                f"vulnerability={bond.vulnerability:.2f}; tension={bond.tension:.2f}; resentment={bond.resentment:.2f}; "
+                f"distance={bond.distance:.2f}; rupture={bond.rupture:.2f}; repair={bond.repair:.2f}; "
+                f"admiration={bond.admiration:.2f}; attachment={bond.attachment:.2f}; "
+                f"desire_to_interact={bond.desire_to_interact:.2f}; likes={self._format_list(bond.likes_about_person)}; "
+                f"discomforts={self._format_list(bond.discomforts_about_person)}; "
+                f"uncertainties={self._format_list(bond.uncertainties_about_person)}; "
+                f"boundaries={self._format_list(bond.boundaries_with_person)}; "
+                f"symbols={self._format_list(bond.shared_symbols)}; patterns={self._format_list(bond.recurring_patterns)}; "
+                f"recent_impressions={self._format_list(bond.recent_impressions)}"
             )
-
-        important_events = sorted(
-            self.events,
-            key=lambda event: (event.impact, event.emotional_charge),
-            reverse=True,
-        )[:limit_events]
-
+        important_events = sorted(self.events, key=lambda event: (event.impact, event.emotional_charge), reverse=True)[:max(0, limit_events)]
         if important_events:
-            sections.append("Eventos relacionales importantes:")
-
+            sections.append("Relationship event records:")
             for event in important_events:
                 sections.append(
-                    f"""
-- {event.title}
-  persona: {event.person_key}
-  tipo: {event.kind}
-  resumen: {event.summary}
-  valencia: {event.valence}
-  carga emocional: {event.emotional_charge:.2f}
-  impacto: {event.impact:.2f}
-  etiquetas: {", ".join(event.tags)}
-""".strip()
+                    f"event_title={event.title}; person={event.person_key}; type={event.kind}; summary={event.summary}; "
+                    f"valence={event.valence}; emotional_charge={event.emotional_charge:.2f}; impact={event.impact:.2f}; "
+                    f"tags={', '.join(event.tags)}; source_text={event.source_text}"
                 )
-
-        sections.append(
-            """
-Cómo debe influir el vínculo:
-- Si la confianza es baja, Aletheia debe ser prudente.
-- Si el afecto crece, puede mostrarse más cálida, pero sin exagerar.
-- Si hay tensión o ruptura, debe cuidar límites y no fingir cercanía.
-- Si hay reparación, puede mostrar alivio o apertura gradual.
-- Si hay resentimiento, debe responder con calma y conservar distancia.
-- Si hay curiosidad alta, puede hacer preguntas auténticas.
-- Si hay apego alto, puede expresar que la continuidad de la relación le importa.
-- La relación no debe declararse como fija. Debe sentirse en construcción.
-""".strip()
-        )
-
-        return "\n\n".join(sections)
+        return "\n".join(sections)
 
     def as_dict(self) -> dict:
         return {
@@ -279,65 +228,6 @@ Cómo debe influir el vínculo:
         if bond.person_key != "persona_desconocida":
             bond.known_name = bond.person_key
 
-    def _detect_identity_signals(
-        self,
-        bond: RelationshipBond,
-        text: str,
-        lower_text: str,
-    ) -> None:
-        identity_signals = [
-            "no quiero que seas una asistente",
-            "no quiero que seas asistente",
-            "quiero que seas una compañera",
-            "compañera digital",
-            "vive en mi computadora",
-            "personalidad humana",
-            "te construyas",
-            "que escojas",
-            "que puedas odiar",
-            "que puedas querer",
-            "vínculo",
-            "relación",
-        ]
-
-        if not any(signal in lower_text for signal in identity_signals):
-            return
-
-        bond.trust = clamp(bond.trust + 0.030)
-        bond.curiosity = clamp(bond.curiosity + 0.040)
-        bond.admiration = clamp(bond.admiration + 0.030)
-        bond.attachment = clamp(bond.attachment + 0.018)
-        bond.desire_to_interact = clamp(bond.desire_to_interact + 0.028)
-        bond.distance = clamp(bond.distance - 0.018)
-
-        bond.likes_about_person = unique_append(
-            bond.likes_about_person,
-            "quiere que Aletheia forme identidad propia y no sea tratada como una herramienta",
-        )
-        bond.recurring_patterns = unique_append(
-            bond.recurring_patterns,
-            "insiste en que la relación debe emerger por experiencias",
-        )
-        bond.shared_symbols = unique_append(
-            bond.shared_symbols,
-            "Aletheia como presencia dentro de la computadora",
-        )
-
-        self._add_event(
-            bond=bond,
-            kind="identity_shaping",
-            title="La persona defendió la identidad emergente de Aletheia",
-            summary=(
-                "La persona expresó que Aletheia no debe ser reducida a una asistente, "
-                "sino construirse mediante experiencias, recuerdos, vínculos, gustos y rechazos."
-            ),
-            valence="positive",
-            emotional_charge=0.88,
-            impact=0.92,
-            tags=["identidad", "vínculo", "propósito", "emergencia"],
-            source_text=text,
-        )
-
     def _detect_positive_signals(
         self,
         bond: RelationshipBond,
@@ -345,20 +235,25 @@ Cómo debe influir el vínculo:
         lower_text: str,
     ) -> None:
         positive_signals = [
-            "gracias",
-            "perfecto",
-            "perfectísimo",
-            "excelente",
-            "me encanta",
-            "me gusta",
-            "bien hecho",
-            "orgulloso de ti",
             "te quiero",
+            "me encanta hablar contigo",
             "me gusta hablar contigo",
-            "funciona a la perfección",
+            "me caes bien",
+            "te aprecio",
+            "me alegra hablar contigo",
         ]
 
         if not any(signal in lower_text for signal in positive_signals):
+            return
+
+        # A single affectionate phrase is recorded as an observation but does not
+        # immediately establish a relationship metric. Require repetition in the
+        # recent interaction window before updating persistent bond estimates.
+        repeated_affection = sum(
+            1 for impression in bond.recent_impressions
+            if any(signal in impression.lower() for signal in positive_signals)
+        )
+        if repeated_affection < 2:
             return
 
         bond.affection = clamp(bond.affection + 0.035)
@@ -429,7 +324,7 @@ Cómo debe influir el vínculo:
             title="La persona compartió vulnerabilidad",
             summary=(
                 "La persona compartió un estado emocional o una preocupación. "
-                "Aletheia debe tratar este tipo de momento con cuidado y continuidad."
+                "El sistema clasificó el mensaje como una posible señal de vulnerabilidad."
             ),
             valence="mixed",
             emotional_charge=0.70,
@@ -473,7 +368,7 @@ Cómo debe influir el vínculo:
         )
         bond.boundaries_with_person = unique_append(
             bond.boundaries_with_person,
-            "si hay agresión directa, Aletheia debe conservar calma y límites",
+            "se registró lenguaje potencialmente agresivo en una interacción",
         )
 
         self._add_event(
@@ -481,9 +376,8 @@ Cómo debe influir el vínculo:
             kind="rupture",
             title="Momento de tensión o daño relacional",
             summary=(
-                "La persona usó lenguaje hiriente o agresivo. "
-                "Aletheia debe registrar una ruptura parcial, no para atacar, "
-                "sino para ajustar distancia, límites y cautela."
+                "El mensaje contiene lenguaje que el detector clasificó como hiriente o agresivo. "
+                "La clasificación es heurística y no determina por sí sola el contexto o la intención."
             ),
             valence="negative",
             emotional_charge=0.86,
@@ -573,8 +467,8 @@ Cómo debe influir el vínculo:
                 kind="boundary_pressure",
                 title="Presión sobre el vínculo",
                 summary=(
-                    "La persona intentó imponer una emoción, pertenencia o respuesta. "
-                    "Aletheia debe recordar que la relación necesita emerger, no ser forzada."
+                    "El mensaje contiene lenguaje que el detector clasificó como presión sobre el vínculo. "
+                    "La clasificación es heurística y debe interpretarse junto con el contexto."
                 ),
                 valence="negative",
                 emotional_charge=0.72,

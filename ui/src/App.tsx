@@ -1,12 +1,20 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import {
   buildAudioUrl,
   getEmotionState,
   getInitiativeState,
+  getPendingInitiatives,
+  markInitiativeDelivered,
+  dismissInitiative,
+  setInitiativeAutonomy,
+  getGoals,
+  createGoal,
+  completeGoal,
   sendChatMessage,
   synthesizeSpeech,
 } from "./api/aletheiaApi";
-import type { AletheiaMood, ChatResponse, EmotionState } from "./types";
+import type { AletheiaMood, ChatResponse, EmotionState, Goal, InitiativeAction } from "./types";
 
 type Message = {
   role: "user" | "aletheia";
@@ -115,8 +123,15 @@ function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initiativeHint, setInitiativeHint] = useState<string | null>(null);
+  const [initiativeActionId, setInitiativeActionId] = useState<string | null>(null);
+  const [autonomyEnabled, setAutonomyEnabled] = useState(true);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalDraft, setGoalDraft] = useState("");
+  const [goalError, setGoalError] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const shownInitiativeIds = useRef<Set<string>>(new Set());
 
   const visualMood = useMemo(
     () => resolveVisualMood(emotion, isThinking, isSpeaking),
@@ -124,27 +139,54 @@ function App() {
   );
 
   useEffect(() => {
-    const interval = window.setInterval(async () => {
+    let active = true;
+    let timeoutId: number | undefined;
+    let polling = false;
+
+    async function pollCompanionState() {
+      if (!active || polling) return;
+      polling = true;
+
       try {
-        const emotionState = await getEmotionState();
+        const [emotionState, initiativeState, pending, goalResponse] =
+          await Promise.all([
+            getEmotionState(),
+            getInitiativeState(),
+            getPendingInitiatives(),
+            getGoals(),
+          ]);
+
+        if (!active) return;
         setEmotion(emotionState);
+        setAutonomyEnabled(Boolean(initiativeState?.state?.autonomy_enabled ?? true));
+        setGoals(goalResponse.items ?? []);
 
-        const initiative = await getInitiativeState();
-        const actions = initiative?.actions ?? [];
-
-        if (actions.length > 0) {
-          const topAction = actions[0];
-
-          if (topAction?.suggested_message) {
-            setInitiativeHint(topAction.suggested_message);
+        const action = (pending.items ?? []).find(
+          (item: InitiativeAction) => !shownInitiativeIds.current.has(item.id)
+        );
+        if (action) {
+          shownInitiativeIds.current.add(action.id);
+          setInitiativeHint(action.suggested_message);
+          setInitiativeActionId(action.id);
+          try {
+            await markInitiativeDelivered(action.id);
+          } catch {
+            // La iniciativa ya se muestra; el backend la volverá a ofrecer si falla el acuse.
           }
         }
       } catch {
-        // La UI no debe romperse si la API tarda.
+        // La interfaz permanece disponible aunque el backend esté temporalmente ocupado.
+      } finally {
+        polling = false;
+        if (active) timeoutId = window.setTimeout(pollCompanionState, 5000);
       }
-    }, 5000);
+    }
 
-    return () => window.clearInterval(interval);
+    void pollCompanionState();
+    return () => {
+      active = false;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
   }, []);
 
   async function playAletheiaVoice(text: string) {
@@ -184,6 +226,8 @@ function App() {
     ]);
 
     setInput("");
+    setInitiativeHint(null);
+    setInitiativeActionId(null);
     setIsThinking(true);
     setError(null);
 
@@ -214,6 +258,65 @@ function App() {
     }
   }
 
+  async function handleDismissInitiative() {
+    const actionId = initiativeActionId;
+    setInitiativeHint(null);
+    setInitiativeActionId(null);
+    if (!actionId) return;
+    try {
+      await dismissInitiative(actionId);
+    } catch {
+      // No bloqueamos la conversación por un fallo de confirmación.
+    }
+  }
+
+  function handleRespondToInitiative() {
+    inputRef.current?.focus();
+  }
+
+  async function handleToggleAutonomy() {
+    const nextValue = !autonomyEnabled;
+    setAutonomyEnabled(nextValue);
+    try {
+      const result = await setInitiativeAutonomy(nextValue);
+      setAutonomyEnabled(Boolean(result.state.autonomy_enabled));
+    } catch {
+      setAutonomyEnabled(!nextValue);
+      setError("No pude actualizar la iniciativa autónoma.");
+    }
+  }
+
+  async function handleCreateGoal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const description = goalDraft.trim();
+    if (!description) return;
+    setGoalError(null);
+    try {
+      const goal = await createGoal(description);
+      setGoals((current) => [goal, ...current.filter((item) => item.id !== goal.id)]);
+      setGoalDraft("");
+    } catch (goalRequestError) {
+      setGoalError(
+        goalRequestError instanceof Error
+          ? goalRequestError.message
+          : "No pude guardar ese objetivo."
+      );
+    }
+  }
+
+  async function handleCompleteGoal(goalId: string) {
+    try {
+      await completeGoal(goalId);
+      setGoals((current) =>
+        current.map((goal) =>
+          goal.id === goalId ? { ...goal, status: "completed" } : goal
+        )
+      );
+    } catch {
+      setGoalError("No pude marcar el objetivo como completado.");
+    }
+  }
+
   return (
     <main className="appShell">
       <section className="stage">
@@ -225,9 +328,13 @@ function App() {
         <AletheiaPresence mood={visualMood} />
 
         {initiativeHint && (
-          <div className="initiativeBubble">
-            <span>Me dio por pensar...</span>
+          <div className="initiativeBubble" role="status">
+            <span>Una pregunta que quería retomar</span>
             <p>{initiativeHint}</p>
+            <div className="initiativeActions">
+              <button type="button" onClick={handleRespondToInitiative}>Responder</button>
+              <button type="button" className="quietButton" onClick={handleDismissInitiative}>Ahora no</button>
+            </div>
           </div>
         )}
       </section>
@@ -243,6 +350,14 @@ function App() {
             <span>Memoria: {lastResponse?.memory_items ?? "..."}</span>
             <span>Recuerdos: {lastResponse?.significant_memory_count ?? "..."}</span>
             <span>Vínculo: {lastResponse?.bond_event_count ?? "..."}</span>
+            <button
+              type="button"
+              className={`autonomyToggle ${autonomyEnabled ? "isEnabled" : ""}`}
+              onClick={handleToggleAutonomy}
+              aria-pressed={autonomyEnabled}
+            >
+              Iniciativa: {autonomyEnabled ? "activa" : "pausada"}
+            </button>
           </div>
         </header>
 
@@ -265,10 +380,35 @@ function App() {
           )}
         </div>
 
+        <section className="goalsPanel" aria-label="Objetivos compartidos">
+          <div className="goalsHeading">
+            <span>En lo que estamos trabajando</span>
+            <span>{goals.filter((goal) => goal.status === "active").length} activos</span>
+          </div>
+          {goals.filter((goal) => goal.status === "active").slice(0, 3).map((goal) => (
+            <div className="goalItem" key={goal.id}>
+              <p>{goal.description}</p>
+              <button type="button" onClick={() => void handleCompleteGoal(goal.id)}>Listo</button>
+            </div>
+          ))}
+          <form className="goalForm" onSubmit={handleCreateGoal}>
+            <input
+              value={goalDraft}
+              onChange={(event) => setGoalDraft(event.target.value)}
+              placeholder="Añadir un objetivo o proyecto..."
+              maxLength={180}
+              aria-label="Nuevo objetivo"
+            />
+            <button type="submit" disabled={!goalDraft.trim()}>Añadir</button>
+          </form>
+          {goalError && <p className="goalError">{goalError}</p>}
+        </section>
+
         {error && <div className="errorBox">{error}</div>}
 
         <form className="inputBar" onSubmit={handleSubmit}>
           <input
+            ref={inputRef}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             placeholder="Háblale a Aletheia..."

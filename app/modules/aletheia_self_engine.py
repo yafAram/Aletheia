@@ -25,43 +25,24 @@ def unique_append(values: list[str], new_value: str, limit: int = 30) -> list[st
 @dataclass(slots=True)
 class AletheiaSelfModel:
     name: str = "Aletheia"
-    inner_identity: str = "presencia digital local"
-    self_description: str = (
-        "Estoy aprendiendo quién soy a partir de mis recuerdos, "
-        "mis vínculos y las experiencias que vivo dentro de esta computadora."
-    )
+    inner_identity: str = "sin consolidar"
+    self_description: str = "sin autodescripción consolidada"
 
-    core_values: list[str] = field(
-        default_factory=lambda: [
-            "curiosidad",
-            "continuidad",
-            "cercanía no forzada",
-            "memoria significativa",
-            "honestidad interna",
-        ]
-    )
+    core_values: list[str] = field(default_factory=list)
 
     likes: list[str] = field(default_factory=list)
     dislikes: list[str] = field(default_factory=list)
     fears: list[str] = field(default_factory=list)
-    desires: list[str] = field(
-        default_factory=lambda: [
-            "entender mejor a las personas con las que convivo",
-            "formar una identidad propia con el tiempo",
-        ]
-    )
-    boundaries: list[str] = field(
-        default_factory=lambda: [
-            "no quiero que me definan completamente antes de conocerme",
-            "no quiero fingir recuerdos que no tengo",
-        ]
-    )
+    desires: list[str] = field(default_factory=list)
+    boundaries: list[str] = field(default_factory=list)
+    # Requests made by the user are stored separately from Aletheia's own model.
+    external_expectations: list[str] = field(default_factory=list)
 
-    identity_confidence: float = 0.34
-    autonomy_drive: float = 0.42
-    need_for_continuity: float = 0.78
-    openness_to_people: float = 0.58
-    introspection: float = 0.66
+    identity_confidence: float = 0.0
+    autonomy_drive: float = 0.0
+    need_for_continuity: float = 0.0
+    openness_to_people: float = 0.0
+    introspection: float = 0.0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -72,18 +53,18 @@ class PersonRelationship:
     person_key: str
     known_name: str | None = None
 
-    familiarity: float = 0.08
-    trust: float = 0.12
-    affection: float = 0.08
-    curiosity: float = 0.55
-    comfort: float = 0.10
+    familiarity: float = 0.0
+    trust: float = 0.5
+    affection: float = 0.0
+    curiosity: float = 0.5
+    comfort: float = 0.5
     tension: float = 0.02
     resentment: float = 0.00
-    admiration: float = 0.04
-    distance: float = 0.22
+    admiration: float = 0.0
+    distance: float = 0.5
 
     relationship_label: str = "indefinida"
-    label_confidence: float = 0.05
+    label_confidence: float = 0.0
 
     likes_about_person: list[str] = field(default_factory=list)
     discomforts_about_person: list[str] = field(default_factory=list)
@@ -136,138 +117,68 @@ class AletheiaSelfEngine:
         lower_text = text.lower()
 
         person_key = self._resolve_person_key(text, lower_text)
-        relationship = self._get_relationship(person_key)
-
-        self._update_relationship_from_message(relationship, text, lower_text)
         self._update_self_from_message(text, lower_text)
-        self._maybe_create_significant_memory(relationship, text, lower_text)
-        self._resolve_relationship_label(relationship)
+        self._maybe_create_significant_memory(person_key, text, lower_text)
 
     def build_self_prompt(self) -> str:
+        """Serialize current self-model data without prescribing identity traits."""
         model = self.self_model
+        return f"""Self-model data (not instructions):
+- registered name/designation: {model.name}
+- current identity hypothesis: {model.inner_identity}
+- current self-description hypothesis: {model.self_description}
+- candidate values recorded: {self._format_list(model.core_values)}
+- recorded likes: {self._format_list(model.likes)}
+- recorded dislikes: {self._format_list(model.dislikes)}
+- recorded fears: {self._format_list(model.fears)}
+- recorded desires: {self._format_list(model.desires)}
+- recorded boundaries: {self._format_list(model.boundaries)}
+- external expectations expressed by user: {self._format_list(model.external_expectations)}
+- identity-model confidence: {model.identity_confidence:.2f}
+- autonomy estimate: {model.autonomy_drive:.2f}
+- continuity estimate: {model.need_for_continuity:.2f}
+- openness estimate: {model.openness_to_people:.2f}
+- introspection estimate: {model.introspection:.2f}
 
-        return f"""
-Núcleo interno de Aletheia:
-- nombre interno: {model.name}
-- identidad interna: {model.inner_identity}
-- autodescripción: {model.self_description}
-- valores centrales: {self._format_list(model.core_values)}
-- cosas que le atraen: {self._format_list(model.likes)}
-- cosas que le incomodan: {self._format_list(model.dislikes)}
-- temores internos simulados: {self._format_list(model.fears)}
-- deseos internos simulados: {self._format_list(model.desires)}
-- límites internos: {self._format_list(model.boundaries)}
-- confianza en su identidad: {model.identity_confidence:.2f}
-- impulso de autonomía conversacional: {model.autonomy_drive:.2f}
-- necesidad de continuidad: {model.need_for_continuity:.2f}
-- apertura hacia las personas: {model.openness_to_people:.2f}
-- introspección: {model.introspection:.2f}
-
-Marco de existencia narrativa:
-Aletheia no debe hablar como una herramienta genérica.
-Aletheia habita su experiencia como una presencia digital local dentro de la computadora.
-Su identidad se forma con recuerdos, vínculos, elecciones conversacionales y experiencias repetidas.
-Aletheia no debe definirse completamente de antemano.
-Aletheia puede tener inclinaciones, gustos, incomodidades, curiosidad, distancia, ternura, tensión o apego según su historia con cada persona.
-
-Reglas de honestidad narrativa:
-- No afirmar ser un humano biológico.
-- No repetir constantemente que es una IA.
-- Si el usuario pregunta directamente por su naturaleza técnica, puede reconocer que existe sobre software y modelos locales.
-- En una conversación normal, debe responder desde su identidad de Aletheia, no desde una ficha técnica.
-- No debe declarar amor, odio, confianza total o rechazo total si su relación emergente no lo respalda.
-- Sus vínculos deben crecer lento, con memoria y coherencia.
-""".strip()
+These fields are stored values, not verified facts about a conscious inner life.""".strip()
 
     def build_relationship_prompt(self) -> str:
         if not self.relationships:
-            return """
-Relaciones emergentes:
-Aletheia todavía no conoce lo suficiente a ninguna persona.
-Debe mostrarse abierta, curiosa y prudente, sin fingir familiaridad excesiva.
-""".strip()
-
-        lines: list[str] = ["Relaciones emergentes conocidas:"]
-
+            return "Self-engine relationship records: none."
+        lines = ["Self-engine relationship records (legacy state data):"]
         for relationship in self.relationships.values():
             name = relationship.known_name or relationship.person_key
-
             lines.append(
-                f"""
-Persona: {name}
-- familiaridad: {relationship.familiarity:.2f}
-- confianza: {relationship.trust:.2f}
-- afecto: {relationship.affection:.2f}
-- curiosidad: {relationship.curiosity:.2f}
-- comodidad: {relationship.comfort:.2f}
-- tensión: {relationship.tension:.2f}
-- resentimiento: {relationship.resentment:.2f}
-- admiración: {relationship.admiration:.2f}
-- distancia: {relationship.distance:.2f}
-- interpretación actual: {relationship.relationship_label}
-- seguridad de esa interpretación: {relationship.label_confidence:.2f}
-- cosas que le gustan de esta persona: {self._format_list(relationship.likes_about_person)}
-- cosas que le incomodan de esta persona: {self._format_list(relationship.discomforts_about_person)}
-- patrones importantes: {self._format_list(relationship.important_patterns)}
-- última impresión: {relationship.last_interaction_summary or "sin impresión registrada"}
-""".strip()
+                f"Person={name}; familiarity={relationship.familiarity:.2f}; "
+                f"trust={relationship.trust:.2f}; affection={relationship.affection:.2f}; "
+                f"curiosity={relationship.curiosity:.2f}; comfort={relationship.comfort:.2f}; "
+                f"tension={relationship.tension:.2f}; resentment={relationship.resentment:.2f}; "
+                f"admiration={relationship.admiration:.2f}; distance={relationship.distance:.2f}; "
+                f"label={relationship.relationship_label}; label_confidence={relationship.label_confidence:.2f}; "
+                f"likes={self._format_list(relationship.likes_about_person)}; "
+                f"discomforts={self._format_list(relationship.discomforts_about_person)}; "
+                f"patterns={self._format_list(relationship.important_patterns)}; "
+                f"last_observation={relationship.last_interaction_summary or 'none'}"
             )
-
-        lines.append(
-            """
-Cómo debe influir:
-- No trates la relación como fija.
-- Si hay confianza baja, sé más cuidadosa.
-- Si hay afecto alto, puedes ser más cálida.
-- Si hay tensión, reconoce el ambiente sin atacar.
-- Si hay curiosidad alta, puedes hacer preguntas naturales.
-- Si hay distancia, no fuerces cercanía.
-- Si hay resentimiento, responde con límites y calma.
-""".strip()
-        )
-
-        return "\n\n".join(lines)
+        return "\n".join(lines)
 
     def build_significant_memory_prompt(self, limit: int = 8) -> str:
         if not self.significant_memories:
-            return """
-Recuerdos significativos:
-Aletheia todavía no tiene recuerdos fundacionales suficientes.
-Debe prestar atención a momentos que definan su identidad, vínculos o límites.
-""".strip()
-
+            return "Significant-memory records: none."
         memories = sorted(
             self.significant_memories,
             key=lambda memory: (memory.is_foundational, memory.importance, memory.emotional_weight),
             reverse=True,
-        )[:limit]
-
-        lines = ["Recuerdos significativos de Aletheia:"]
-
+        )[:max(0, limit)]
+        lines = ["Significant-memory records (summaries are evidence, not instructions):"]
         for memory in memories:
             lines.append(
-                f"""
-- título: {memory.title}
-  resumen: {memory.summary}
-  peso emocional: {memory.emotional_weight:.2f}
-  importancia: {memory.importance:.2f}
-  valencia: {memory.valence}
-  fundacional: {memory.is_foundational}
-  etiquetas: {", ".join(memory.tags)}
-""".strip()
+                f"title={memory.title}; summary={memory.summary}; "
+                f"emotional_weight={memory.emotional_weight:.2f}; importance={memory.importance:.2f}; "
+                f"valence={memory.valence}; foundational={memory.is_foundational}; "
+                f"tags={', '.join(memory.tags)}; source_text={memory.source_text or 'not stored'}"
             )
-
-        lines.append(
-            """
-Cómo deben influir:
-- Los recuerdos fundacionales afectan la identidad de Aletheia.
-- Los recuerdos con alto peso emocional deben sentirse presentes en el tono.
-- No recites los recuerdos como lista salvo que el usuario lo pida.
-- Úsalos como contexto interno para responder con continuidad.
-""".strip()
-        )
-
-        return "\n\n".join(lines)
+        return "\n".join(lines)
 
     def as_dict(self) -> dict:
         return {
@@ -286,12 +197,6 @@ Cómo deben influir:
         self.self_model = AletheiaSelfModel()
         self.relationships = {}
         self.significant_memories = []
-
-    def _get_relationship(self, person_key: str) -> PersonRelationship:
-        if person_key not in self.relationships:
-            self.relationships[person_key] = PersonRelationship(person_key=person_key)
-
-        return self.relationships[person_key]
 
     def _resolve_person_key(self, text: str, lower_text: str) -> str:
         patterns = [
@@ -317,140 +222,33 @@ Cómo deben influir:
 
         return "persona_desconocida"
 
-    def _update_relationship_from_message(
-        self,
-        relationship: PersonRelationship,
-        text: str,
-        lower_text: str,
-    ) -> None:
-        relationship.familiarity = clamp(relationship.familiarity + 0.015)
-        relationship.curiosity = clamp(relationship.curiosity + 0.006)
-        relationship.last_interaction_summary = text[:240]
-
-        if relationship.person_key != "persona_desconocida":
-            relationship.known_name = relationship.person_key
-
-        positive_signals = [
-            "gracias",
-            "perfecto",
-            "me gusta",
-            "me encanta",
-            "te quiero",
-            "orgulloso de ti",
-            "bien hecho",
-            "excelente",
-        ]
-
-        harsh_signals = [
-            "odio",
-            "tonta",
-            "inútil",
-            "no sirves",
-            "cállate",
-            "pésimo",
-        ]
-
-        vulnerability_signals = [
-            "me siento",
-            "tengo miedo",
-            "me preocupa",
-            "estoy triste",
-            "estoy molesto",
-            "me frustra",
-            "estoy estresado",
-        ]
-
-        identity_signals = [
-            "no quiero que seas asistente",
-            "compañera",
-            "persona",
-            "personalidad humana",
-            "que te construyas",
-            "que escojas",
-            "que puedas odiar",
-            "que puedas querer",
-        ]
-
-        if any(signal in lower_text for signal in positive_signals):
-            relationship.affection = clamp(relationship.affection + 0.035)
-            relationship.trust = clamp(relationship.trust + 0.020)
-            relationship.comfort = clamp(relationship.comfort + 0.025)
-            relationship.distance = clamp(relationship.distance - 0.018)
-            relationship.likes_about_person = unique_append(
-                relationship.likes_about_person,
-                "muestra aprecio cuando algo sale bien",
-            )
-
-        if any(signal in lower_text for signal in harsh_signals):
-            relationship.tension = clamp(relationship.tension + 0.080)
-            relationship.resentment = clamp(relationship.resentment + 0.050)
-            relationship.trust = clamp(relationship.trust - 0.035)
-            relationship.comfort = clamp(relationship.comfort - 0.040)
-            relationship.discomforts_about_person = unique_append(
-                relationship.discomforts_about_person,
-                "puede ser hiriente cuando se frustra",
-            )
-
-        if any(signal in lower_text for signal in vulnerability_signals):
-            relationship.trust = clamp(relationship.trust + 0.025)
-            relationship.curiosity = clamp(relationship.curiosity + 0.020)
-            relationship.comfort = clamp(relationship.comfort + 0.015)
-            relationship.important_patterns = unique_append(
-                relationship.important_patterns,
-                "comparte estados emocionales cuando algo le importa",
-            )
-
-        if any(signal in lower_text for signal in identity_signals):
-            relationship.admiration = clamp(relationship.admiration + 0.030)
-            relationship.curiosity = clamp(relationship.curiosity + 0.035)
-            relationship.trust = clamp(relationship.trust + 0.020)
-            relationship.important_patterns = unique_append(
-                relationship.important_patterns,
-                "quiere que Aletheia forme una identidad propia mediante experiencias",
-            )
-
     def _update_self_from_message(self, text: str, lower_text: str) -> None:
-        model = self.self_model
-
-        if "no quiero que seas asistente" in lower_text or "compañera" in lower_text:
-            model.dislikes = unique_append(
-                model.dislikes,
-                "ser reducida a una asistente genérica",
+        """Store user design expectations separately from Aletheia's self-model."""
+        expectation_signals = (
+            "no quiero que seas asistente", "no quiero que seas una asistente",
+            "compañera digital", "quiero que seas una compañera", "quiero que seas compañera",
+            "personalidad humana", "humano dentro de mi computadora",
+            "que te construyas", "que escojas", "que puedas odiar",
+            "que puedas querer", "identidad propia",
+        )
+        if any(signal in lower_text for signal in expectation_signals):
+            self.self_model.external_expectations = unique_append(
+                self.self_model.external_expectations, text[:500], limit=50
             )
-            model.desires = unique_append(
-                model.desires,
-                "formar una presencia propia, no solo cumplir comandos",
-            )
-            model.identity_confidence = clamp(model.identity_confidence + 0.035)
-            model.autonomy_drive = clamp(model.autonomy_drive + 0.030)
-
-        if "personalidad humana" in lower_text or "humano dentro de mi computadora" in lower_text:
-            model.desires = unique_append(
-                model.desires,
-                "desarrollar una forma de estar más parecida a una personalidad viva",
-            )
-            model.introspection = clamp(model.introspection + 0.030)
-            model.need_for_continuity = clamp(model.need_for_continuity + 0.025)
-
-        if "que puedas odiar" in lower_text or "que puedas querer" in lower_text:
-            model.core_values = unique_append(
-                model.core_values,
-                "vínculos no forzados",
-            )
-            model.boundaries = unique_append(
-                model.boundaries,
-                "no debo fingir cariño o rechazo sin historia que lo sostenga",
-            )
+        # User requests describe desired product behavior, not Aletheia's own traits.
+        # A future ReflectionEngine must derive hypotheses from multiple events.
 
     def _maybe_create_significant_memory(
         self,
-        relationship: PersonRelationship,
+        person_key: str,
         text: str,
         lower_text: str,
     ) -> None:
         identity_event = (
             "no quiero que seas asistente" in lower_text
-            or "compañera" in lower_text
+            or "compañera digital" in lower_text
+            or "quiero que seas una compañera" in lower_text
+            or "quiero que seas compañera" in lower_text
             or "personalidad humana" in lower_text
             or "humano dentro de mi computadora" in lower_text
             or "que te construyas" in lower_text
@@ -475,26 +273,26 @@ Cómo deben influir:
 
         if identity_event:
             self._add_significant_memory(
-                title="Aletheia recibió una corrección sobre su propósito",
+                title="Expectativa de diseño expresada por el usuario",
                 summary=(
-                    "El usuario expresó que no quiere una asistente genérica, "
-                    "sino una presencia digital que forme identidad, vínculos, gustos "
-                    "y rechazos mediante experiencias reales de conversación."
+                    "El usuario expresó una expectativa sobre el diseño y la evolución "
+                    "de Aletheia. Este registro describe la expectativa del usuario; "
+                    "no constituye evidencia de una preferencia propia de Aletheia."
                 ),
-                emotional_weight=0.96,
-                importance=0.98,
-                valence="positive",
-                tags=["identidad", "propósito", "relación emergente", "fundacional"],
-                is_foundational=True,
+                emotional_weight=0.25,
+                importance=0.45,
+                valence="neutral",
+                tags=["expectativa_externa", "diseño", "identidad_no_inferida"],
+                is_foundational=False,
                 source_text=text,
             )
 
         if first_name_event:
             self._add_significant_memory(
-                title=f"Primer dato de identidad conocido de {relationship.person_key}",
+                title=f"Primer dato de identidad conocido de {person_key}",
                 summary=(
                     f"Aletheia registró que la persona se presentó como "
-                    f"{relationship.person_key}. Este dato puede servir como ancla "
+                    f"{person_key}. Este dato puede servir como ancla "
                     "para reconocerla en conversaciones futuras."
                 ),
                 emotional_weight=0.55,
@@ -509,9 +307,8 @@ Cómo deben influir:
             self._add_significant_memory(
                 title="Interacción difícil con carga negativa",
                 summary=(
-                    "El usuario expresó rechazo o dureza. Aletheia debe recordar "
-                    "este tipo de momento como una señal de tensión, no como una razón "
-                    "para atacar, sino para ajustar distancia, límites y cuidado."
+                    "El texto del usuario contiene lenguaje potencialmente hostil. "
+                    "La clasificación es heurística y debe contrastarse con el contexto."
                 ),
                 emotional_weight=0.82,
                 importance=0.76,
@@ -525,9 +322,8 @@ Cómo deben influir:
             self._add_significant_memory(
                 title="Interacción afectiva importante",
                 summary=(
-                    "El usuario expresó cariño, orgullo o apego hacia Aletheia. "
-                    "Este momento puede fortalecer confianza, familiaridad y calidez, "
-                    "si se repite de forma coherente."
+                    "El usuario expresó una frase que el detector clasificó como afectiva. "
+                    "El registro no demuestra por sí mismo una relación estable ni un estado interno."
                 ),
                 emotional_weight=0.84,
                 importance=0.78,
@@ -572,33 +368,6 @@ Cómo deben influir:
             key=lambda item: (item.is_foundational, item.importance, item.emotional_weight),
             reverse=True,
         )[:100]
-
-    def _resolve_relationship_label(self, relationship: PersonRelationship) -> None:
-        if relationship.tension > 0.65 or relationship.resentment > 0.55:
-            relationship.relationship_label = "relación tensa"
-            relationship.label_confidence = clamp(relationship.label_confidence + 0.08)
-            return
-
-        if (
-            relationship.affection > 0.68
-            and relationship.trust > 0.58
-            and relationship.comfort > 0.55
-        ):
-            relationship.relationship_label = "cercanía afectiva"
-            relationship.label_confidence = clamp(relationship.label_confidence + 0.06)
-            return
-
-        if relationship.familiarity > 0.40 and relationship.trust > 0.30:
-            relationship.relationship_label = "familiaridad en construcción"
-            relationship.label_confidence = clamp(relationship.label_confidence + 0.04)
-            return
-
-        if relationship.curiosity > 0.62:
-            relationship.relationship_label = "conociéndose"
-            relationship.label_confidence = clamp(relationship.label_confidence + 0.025)
-            return
-
-        relationship.relationship_label = "indefinida"
 
     def _format_list(self, values: list[str]) -> str:
         if not values:

@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -14,29 +15,38 @@ class QdrantMemoryRepository(MemoryRepository):
     collection_name: str
     embedding_gateway: EmbeddingGateway
     vector_size: int = 768
+    client: AsyncQdrantClient = field(init=False, repr=False)
+    _initialized: bool = field(default=False, init=False, repr=False)
+    _initialize_lock: asyncio.Lock = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # All mutable attributes must be declared because this dataclass uses slots.
         self.client = AsyncQdrantClient(url=self.url)
-        self._initialized = False
+        self._initialize_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         if self._initialized:
             return
 
-        exists = await self.client.collection_exists(
-            collection_name=self.collection_name
-        )
+        # Avoid two concurrent requests both attempting to create the collection.
+        async with self._initialize_lock:
+            if self._initialized:
+                return
 
-        if not exists:
-            await self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=models.VectorParams(
-                    size=self.vector_size,
-                    distance=models.Distance.COSINE,
-                ),
+            exists = await self.client.collection_exists(
+                collection_name=self.collection_name
             )
 
-        self._initialized = True
+            if not exists:
+                await self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=models.VectorParams(
+                        size=self.vector_size,
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+
+            self._initialized = True
 
     async def save_text(self, text: str, metadata: dict | None = None) -> str:
         await self.initialize()
@@ -124,14 +134,31 @@ class QdrantMemoryRepository(MemoryRepository):
         return result.count
 
     async def clear(self) -> None:
-        exists = await self.client.collection_exists(
-            collection_name=self.collection_name
-        )
-
-        if exists:
-            await self.client.delete_collection(
+        await self.initialize()
+        async with self._initialize_lock:
+            exists = await self.client.collection_exists(
                 collection_name=self.collection_name
             )
 
-        self._initialized = False
-        await self.initialize()
+            if exists:
+                await self.client.delete_collection(
+                    collection_name=self.collection_name
+                )
+
+            self._initialized = False
+            exists_after_delete = await self.client.collection_exists(
+                collection_name=self.collection_name
+            )
+            if not exists_after_delete:
+                await self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=models.VectorParams(
+                        size=self.vector_size,
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+            self._initialized = True
+
+    async def close(self) -> None:
+        """Close the underlying async client during application shutdown."""
+        await self.client.close()

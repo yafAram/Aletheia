@@ -46,6 +46,17 @@ class Settings(BaseSettings):
 
     async_memory_persistence: bool = True
 
+    # AUTONOMOUS CONVERSATIONAL INITIATIVE
+    initiative_autonomy_enabled: bool = True
+    initiative_tick_seconds: int = 30
+    initiative_idle_threshold_seconds: int = 1800
+    initiative_cooldown_seconds: int = 1800
+    initiative_max_pending_actions: int = 5
+
+    # Persistent explicit goals and follow-up context
+    goal_state_path: str = "storage/goals.json"
+    goal_prompt_limit: int = 8
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

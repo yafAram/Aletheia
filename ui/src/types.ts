@@ -40,3 +40,42 @@ export type AletheiaMood =
   | "tired"
   | "stressed"
   | "curious";
+
+export type InitiativeAction = {
+  id: string;
+  type: string;
+  priority: number;
+  reason: string;
+  suggested_message: string;
+  should_interrupt: boolean;
+  cooldown_seconds: number;
+  created_at: string;
+  origin: string;
+  goal_id?: string | null;
+  delivered_at?: string | null;
+  dismissed_at?: string | null;
+};
+
+export type Goal = {
+  id: string;
+  description: string;
+  status: string;
+  source: string;
+  priority: number;
+  confidence: number;
+  created_at: string;
+  updated_at: string;
+  last_mentioned_at: string;
+  last_check_in_at?: string | null;
+};
+
+export type GoalListResponse = {
+  items: Goal[];
+  total: number;
+};
+
+export type InitiativeStateResponse = {
+  state: Record<string, unknown> & { autonomy_enabled?: boolean };
+  observations: Record<string, unknown>[];
+  actions: InitiativeAction[];
+};

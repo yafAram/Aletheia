@@ -503,6 +503,76 @@ make chat MSG="Hola Aletheia"
 
 ---
 
+
+## 🌱 Evolución: iniciativa autónoma y objetivos persistentes
+
+La aplicación incluye un ciclo local de iniciativa conversacional. No ejecuta acciones del sistema ni utiliza cámara o micrófono por sí solo: espera a que exista una conversación previa, respeta un periodo de inactividad y crea una sugerencia de baja presión.
+
+### Qué hace
+
+- Evalúa el silencio en segundo plano, sin necesitar una petición HTTP nueva.
+- Publica una iniciativa una sola vez en la interfaz; permite responder o descartarla.
+- Permite pausar y reanudar la iniciativa desde la interfaz.
+- Registra objetivos expresados explícitamente y los incorpora al contexto conversacional.
+- Puede retomar un objetivo después de un periodo de inactividad.
+- Persiste el estado de iniciativa y los objetivos mediante escritura JSON atómica.
+
+Los objetivos detectados a partir del lenguaje son heurísticos. Puedes añadirlos o completarlos manualmente desde el panel de la interfaz. Un objetivo registrado pertenece al usuario, no se interpreta como un deseo propio de Aletheia.
+
+### Configuración
+
+Estas variables son opcionales porque tienen valores predeterminados:
+
+```env
+INITIATIVE_AUTONOMY_ENABLED=true
+INITIATIVE_TICK_SECONDS=30
+INITIATIVE_IDLE_THRESHOLD_SECONDS=1800
+INITIATIVE_COOLDOWN_SECONDS=1800
+INITIATIVE_MAX_PENDING_ACTIONS=5
+GOAL_STATE_PATH=storage/goals.json
+GOAL_PROMPT_LIMIT=8
+```
+
+- `INITIATIVE_TICK_SECONDS`: frecuencia de evaluación del ciclo.
+- `INITIATIVE_IDLE_THRESHOLD_SECONDS`: inactividad mínima antes de una iniciativa.
+- `INITIATIVE_COOLDOWN_SECONDS`: tiempo mínimo entre iniciativas.
+- `INITIATIVE_AUTONOMY_ENABLED`: estado inicial del ciclo. También puede pausarse desde la interfaz.
+- `GOAL_STATE_PATH`: ruta local de los objetivos persistentes.
+
+Los tiempos son límites operativos ajustables, no valores psicológicos ni garantías sobre la frecuencia de conversación.
+
+### Endpoints nuevos
+
+| Método | Ruta | Uso |
+| --- | --- | --- |
+| `GET` | `/api/initiative/pending` | Consultar iniciativas espontáneas pendientes |
+| `POST` | `/api/initiative/{action_id}/delivered` | Confirmar que la interfaz mostró una iniciativa |
+| `POST` | `/api/initiative/{action_id}/dismiss` | Descartar una iniciativa |
+| `POST` | `/api/initiative/autonomy` | Pausar o reanudar la iniciativa con `{"enabled": true/false}` |
+| `GET` | `/api/goals` | Consultar objetivos |
+| `POST` | `/api/goals` | Añadir un objetivo con `description` y `priority` opcional |
+| `POST` | `/api/goals/{goal_id}/complete` | Marcar un objetivo como completado |
+
+### Pruebas
+
+Desde la raíz del proyecto:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+Para validar la interfaz:
+
+```bash
+cd ui
+npm ci
+npm run lint
+npm run build
+```
+
+La API difiere la importación del cliente de Qdrant y de los motores de voz hasta que se solicitan esas funciones. Así, una comprobación de salud puede ejecutarse sin inicializar el almacenamiento vectorial ni cargar modelos de voz.
+
 ## 🧭 Roadmap del MVP
 
 * [x] Crear estructura base del repositorio.
