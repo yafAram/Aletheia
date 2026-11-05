@@ -108,20 +108,26 @@ class QdrantMemoryRepository(MemoryRepository):
         if limit <= 0:
             limit = 20
 
-        points, _ = await self.client.scroll(
-            collection_name=self.collection_name,
-            limit=limit,
-            with_payload=True,
-            with_vectors=False,
-        )
+        # Qdrant scroll order is not chronological. Page through the collection,
+        # then return the newest records so short-term conversational continuity
+        # does not accidentally use the first messages ever written.
+        items: list[dict] = []
+        offset = None
+        while True:
+            points, next_offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                offset=offset,
+                limit=256,
+                with_payload=True,
+                with_vectors=False,
+            )
+            items.extend(point.payload for point in points if point.payload)
+            if next_offset is None or not points:
+                break
+            offset = next_offset
 
-        items = [point.payload for point in points if point.payload]
-
-        return sorted(
-            items,
-            key=lambda item: item.get("created_at", ""),
-            reverse=False,
-        )
+        items.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        return items[:limit]
 
     async def count(self) -> int:
         await self.initialize()

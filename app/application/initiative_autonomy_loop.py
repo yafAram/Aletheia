@@ -55,6 +55,12 @@ class InitiativeAutonomyLoop:
                 pass
 
             try:
+                # Do not accumulate autonomous messages that the UI has not
+                # delivered or dismissed. One pending initiative is enough.
+                pending = self.engine.pending_autonomous_actions(limit=1)
+                if pending:
+                    continue
+
                 action = self.engine.evaluate_idle_initiative(
                     idle_threshold_seconds=self.idle_threshold_seconds,
                     cooldown_seconds=self.cooldown_seconds,

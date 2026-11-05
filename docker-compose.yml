@@ -4,6 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: aletheia_api
+    # Set ALETHEIA_UID/ALETHEIA_GID in the shell before Compose so storage files
+    # remain editable by the same Linux user who owns the project checkout.
+    user: "${ALETHEIA_UID:-1000}:${ALETHEIA_GID:-1000}"
     env_file:
       - .env
     ports:

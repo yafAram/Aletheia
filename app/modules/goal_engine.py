@@ -50,10 +50,6 @@ class GoalEngine:
             r"me gustar[ií]a aprender|quiero mejorar)\s+(.{5,180})",
             re.I,
         ),
-        re.compile(
-            r"\b(?:quiero|me gustar[ií]a|necesito)\s+(?:que\s+)?(.{8,160})",
-            re.I,
-        ),
     )
     _GENERIC = {
         "hablar contigo", "saber mas", "saber más", "que me ayudes",
@@ -66,7 +62,19 @@ class GoalEngine:
 
     def observe_user_message(self, message: str) -> Goal | None:
         clean = " ".join(message.strip().split())
-        if not clean or clean.endswith("?") or len(clean) > 1200:
+        normalized_message = _normalize(clean)
+        conversational_intents = (
+            "conocerte mejor", "saber mas de ti", "saber mas tu idea",
+            "como te gustaria", "que te gustaria", "de que te gustaria hablar",
+            "podrias abrir", "abre por favor", "abre porfavor",
+            "recuerdas quien soy", "como estas", "como te encuentras",
+        )
+        if (
+            not clean
+            or clean.endswith(("?", "？"))
+            or len(clean) > 1200
+            or any(phrase in normalized_message for phrase in conversational_intents)
+        ):
             self._refresh_mentions(clean)
             return None
 
@@ -212,7 +220,7 @@ class GoalEngine:
                 continue
             candidate = re.split(r"[\n.!?;]", match.group(1), maxsplit=1)[0].strip(" ,:")
             candidate = candidate[:180].strip()
-            if len(candidate) < (5 if index == 0 else 9):
+            if len(candidate) < 5:
                 continue
             normalized = _normalize(candidate)
             if normalized.startswith(("que ", "si ", "solo ", "mucho ", "un poco ")):

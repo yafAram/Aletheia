@@ -1,693 +1,91 @@
-# 🧠 Aletheia Local MVP
+# Corrección de sincronización, memoria y permisos de Aletheia/Lumina
 
-**Aletheia** es un agente conversacional local construido con **Python**, **FastAPI**, **Ollama** y **Qdrant**.
+Este parche se basa en el ZIP del proyecto y en los logs compartidos. No borra `storage`, Qdrant ni modelos.
 
-La idea principal del proyecto es crear una IA que no solo responda mensajes, sino que pueda conversar con más calidez, recordar información importante del usuario, recuperar recuerdos por significado y simular un estado emocional básico que influya en su forma de responder.
+## Qué corrige
 
-Este MVP corre de forma local usando Docker, sin depender de APIs externas para el LLM ni para la memoria.
+1. **Token compartido automático del agente**: el agente crea una única credencial en `~/.config/aletheia/desktop-agent-token` con permisos privados. Electron lee el mismo archivo; el agente vuelve a leerlo en cada petición, por lo que la rotación del archivo no exige volver a pegar el token en la UI. Lumina intenta iniciar el agente si `/health` no responde.
+2. **Permisos de `storage`**: Compose puede ejecutar la API con el UID/GID del usuario Linux, evitando que nuevos JSON queden como `root:root` y modo `0600` inaccesible para el usuario de escritorio.
+3. **Timeout de chat**: aumenta el timeout de la petición de escritorio a 5 minutos. Los logs mostraron generaciones reales de 99-113 segundos en CPU.
+4. **Prompt más compacto y conversacional**: limita la cantidad de estado/memoria que se vuelve a inyectar al LLM y elimina la regla que dejaba el estilo prácticamente sin definir. No borra recuerdos almacenados.
+5. **Captura de pantalla**: deja traceback en el log del agente si falla la sesión gráfica.
 
----
+## Instalación segura
 
-## ✨ Estado actual del proyecto
-
-Actualmente Aletheia ya puede:
-
-* Ejecutar un modelo local mediante **Ollama**.
-* Exponer una API local con **FastAPI**.
-* Guardar conversaciones en **Qdrant**.
-* Generar embeddings con `nomic-embed-text`.
-* Recuperar memoria por similitud semántica.
-* Recordar datos del usuario dentro de su memoria persistente.
-* Responder con una personalidad más cálida y menos robótica.
-* Simular un estado emocional básico.
-* Ajustar su tono según afecto, confianza, estrés, curiosidad y energía.
-
----
-
-## 🎯 Objetivo del MVP
-
-El objetivo de Aletheia Local MVP es construir la base técnica de un asistente IA local con personalidad progresiva.
-
-No buscamos solo un chatbot frío conectado a un modelo. La meta es crear una presencia conversacional capaz de:
-
-* Recordar información importante del usuario.
-* Usar memoria semántica para responder con contexto.
-* Adaptar su tono según la interacción.
-* Simular emociones conversacionales.
-* Mantener una arquitectura limpia, modular y escalable.
-* Prepararse para integrar voz, visión, TTS y una futura interfaz local.
-
----
-
-## 🧩 Tecnologías principales
-
-| Tecnología       | Uso                                                  |
-| ---------------- | ---------------------------------------------------- |
-| Python 3.11      | Lenguaje principal del backend                       |
-| FastAPI          | API local                                            |
-| Uvicorn          | Servidor ASGI                                        |
-| Docker Compose   | Orquestación local                                   |
-| Ollama           | Ejecución local de modelos IA                        |
-| llama3.2:3b      | Modelo conversacional base                           |
-| nomic-embed-text | Modelo de embeddings                                 |
-| Qdrant           | Base vectorial para memoria semántica                |
-| Pydantic         | Validación y configuración                           |
-| HTTPX            | Comunicación HTTP asíncrona                          |
-| Loguru           | Logging                                              |
-| NumPy            | Base para futuros cálculos emocionales y vectoriales |
-
----
-
-## 🏗️ Arquitectura general
-
-Aletheia usa una arquitectura modular por capas.
-
-```txt
-Usuario
-  ↓
-FastAPI /api/chat
-  ↓
-ChatUseCase
-  ↓
-EmotionEngine
-  ↓
-QdrantMemoryRepository
-  ↓
-OllamaEmbeddingClient
-  ↓
-Qdrant
-  ↓
-OllamaClient
-  ↓
-Modelo LLM local
-  ↓
-Respuesta de Aletheia
-```
-
-La API recibe el mensaje del usuario, actualiza el estado emocional, busca recuerdos relevantes en Qdrant usando embeddings, construye un prompt contextual y finalmente consulta el modelo local mediante Ollama.
-
----
-
-## 📁 Estructura del proyecto
-
-```txt
-app/
-  api/
-    routes.py                  # Endpoints FastAPI
-    schemas.py                 # DTOs de entrada y salida
-
-  application/
-    chat_use_case.py           # Caso de uso principal de conversación
-
-  core/
-    config.py                  # Configuración por variables de entorno
-    logger.py                  # Logging del proyecto
-
-  domain/
-    contracts.py               # Interfaces y contratos del dominio
-
-  infrastructure/
-    ollama_client.py           # Cliente para conversación con Ollama
-    ollama_embedding_client.py # Cliente para embeddings con Ollama
-    qdrant_memory.py           # Repositorio de memoria semántica
-
-  modules/
-    emotion_engine.py          # Motor emocional básico
-
-scripts/
-  # Scripts auxiliares del proyecto
-
-models/
-  # Modelos locales si se montan manualmente
-
-storage/
-  # Datos persistentes locales si aplica
-
-docker-compose.yml
-Dockerfile
-requirements.txt
-.env.example
-README.md
-```
-
----
-
-## 🧠 Memoria semántica
-
-Aletheia usa Qdrant para guardar recuerdos como vectores.
-
-Cada mensaje importante se guarda con:
-
-* Texto original.
-* Metadata.
-* Fecha de creación.
-* Embedding generado por Ollama.
-* Identificador único.
-
-Ejemplo de recuerdo guardado:
-
-```json
-{
-  "id": "uuid",
-  "text": "Mi nombre es Aram",
-  "metadata": {
-    "source": "user",
-    "type": "chat_message"
-  },
-  "created_at": "2026-06-07T20:05:01.925625+00:00"
-}
-```
-
-Gracias a los embeddings, Aletheia puede recuperar información aunque el usuario pregunte con otras palabras.
-
-Ejemplo:
-
-```txt
-Usuario: Mi nombre es Aram.
-Usuario: ¿Cómo me llamo?
-Aletheia: Te llamas Aram.
-```
-
----
-
-## 💛 Motor emocional básico
-
-Aletheia tiene un estado emocional simulado que modifica su estilo de respuesta.
-
-Actualmente maneja:
-
-```txt
-mood
-affection
-trust
-stress
-curiosity
-energy
-```
-
-Ejemplo de estado emocional:
-
-```json
-{
-  "mood": "warm",
-  "affection": 0.58,
-  "trust": 0.54,
-  "stress": 0.07,
-  "curiosity": 0.51,
-  "energy": 0.72
-}
-```
-
-Este estado no representa emociones reales. Es una simulación conversacional diseñada para que Aletheia responda con más naturalidad, continuidad y personalidad.
-
-Si el usuario la trata bien, el afecto y la confianza pueden subir.
-
-Si el usuario está molesto o reporta problemas, el estrés puede aumentar y sus respuestas se vuelven más cuidadosas.
-
----
-
-## 🧪 Endpoints disponibles
-
-### Health check
-
-```http
-GET /health
-```
-
-Sirve para verificar que la API está viva.
-
----
-
-### Chat
-
-```http
-POST /api/chat
-```
-
-Body:
-
-```json
-{
-  "message": "Hola Aletheia, recuerda que mi nombre es Aram.",
-  "use_memory": true
-}
-```
-
-Respuesta aproximada:
-
-```json
-{
-  "response": "Claro, Aram. Lo tengo presente.",
-  "model": "llama3.2:3b",
-  "latency_ms": 4210,
-  "memory_items": 2,
-  "emotion_state": {
-    "mood": "warm",
-    "affection": 0.5,
-    "trust": 0.5,
-    "stress": 0.09,
-    "curiosity": 0.45,
-    "energy": 0.705
-  }
-}
-```
-
----
-
-### Listar memoria
-
-```http
-GET /api/memory
-```
-
-Permite ver los recuerdos guardados en Qdrant.
-
----
-
-### Limpiar memoria
-
-```http
-DELETE /api/memory
-```
-
-Elimina la colección de memoria y la vuelve a crear.
-
-Útil cuando se cambia el tamaño de embeddings o se quiere iniciar desde cero.
-
----
-
-### Estado emocional
-
-```http
-GET /api/emotion
-```
-
-Devuelve el estado emocional simulado actual de Aletheia.
-
----
-
-## ⚙️ Requisitos
-
-* Docker Desktop o Docker Engine.
-* Docker Compose.
-* Git.
-* Windows, Linux o macOS.
-* GPU NVIDIA opcional para acelerar Ollama.
-* Python 3.11 si se ejecuta fuera de Docker.
-
-> Nota: El proyecto está pensado para correr con Docker. Ejecutarlo fuera de Docker es posible, pero todavía no es la ruta principal del MVP.
-
----
-
-## 🚀 Inicio rápido
-
-Clona el repositorio y entra al proyecto:
+Desde la raíz del proyecto `~/Documentos/Aletheia`:
 
 ```bash
-git clone <URL_DEL_REPOSITORIO>
-cd Aletheia
+cd ~/Documentos/Aletheia
+mkdir -p backups/antes-sincronizacion
+cp -a docker-compose.yml backups/antes-sincronizacion/
+cp -a app desktop_agent ui/desktop ui/src/desktop backups/antes-sincronizacion/
 ```
 
-Copia el archivo de variables de entorno:
+Copia los archivos de este ZIP conservando las rutas. Si usas Git, primero revisa `git status` y haz un commit/backup de tus cambios propios.
+
+### Una sola migración de permisos
+
+No elimines ni reemplaces `goals.json` ni ningún `*.corrupt-*`. Primero guarda una copia de `storage`:
 
 ```bash
-cp .env.example .env
+cp -a storage "backups/storage-antes-permisos-$(date +%Y%m%d-%H%M%S)"
+sudo chown -R "$(id -u):$(id -g)" storage
 ```
 
-En Windows PowerShell:
-
-```powershell
-copy .env.example .env
-```
-
-Levanta los contenedores:
+Esto cambia propietarios, no contenido. Después inicia Compose en la misma terminal para pasar el UID/GID correcto:
 
 ```bash
-docker compose up -d --build
+export ALETHEIA_UID="$(id -u)"
+export ALETHEIA_GID="$(id -g)"
+docker compose up -d --build api
 ```
 
----
+No uses `docker compose down -v`.
 
-## 📦 Modelos necesarios en Ollama
+### Token compartido
 
-Descarga el modelo conversacional:
+1. Cierra cualquier agente antiguo que hayas iniciado manualmente (Ctrl+C en esa terminal). Haz esto una sola vez para que no quede una instancia antigua ocupando el puerto 8765.
+2. Cierra Lumina si está abierta.
+3. Abre Lumina con:
 
 ```bash
-docker exec -it aletheia_ollama ollama pull llama3.2:3b
+source ~/.nvm/nvm.sh
+cd ~/Documentos/Aletheia/ui
+npm run desktop:dev
 ```
 
-Descarga el modelo de embeddings:
+Lumina intentará iniciar el agente con `.venv-desktop/bin/python`. El agente generará el token compartido la primera vez. No pegues tokens manualmente en la interfaz ni publiques el archivo de token.
+
+Si tu entorno virtual tiene otro nombre, ajusta el candidato Python en `ui/desktop/main.cjs` o crea `.venv-desktop` con `scripts/dev_install.sh` según el README del proyecto.
+
+## Verificación
 
 ```bash
-docker exec -it aletheia_ollama ollama pull nomic-embed-text
-```
-
-Verifica que ambos estén instalados:
-
-```bash
-docker exec -it aletheia_ollama ollama list
-```
-
-Debes ver algo parecido a:
-
-```txt
-llama3.2:3b
-nomic-embed-text
-```
-
----
-
-## 🔐 Variables de entorno
-
-Ejemplo de `.env`:
-
-```env
-APP_NAME=Aletheia Local MVP
-APP_VERSION=0.1.0
-ENVIRONMENT=local
-LOG_LEVEL=INFO
-
-API_HOST=0.0.0.0
-API_PORT=8000
-
-OLLAMA_BASE_URL=http://ollama:11434
-OLLAMA_MODEL=llama3.2:3b
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-
-QDRANT_URL=http://qdrant:6333
-QDRANT_COLLECTION=aletheia_memory
-QDRANT_VECTOR_SIZE=768
-```
-
----
-
-## 🧪 Pruebas rápidas
-
-### Verificar API
-
-```bash
-curl http://localhost:8000/health
-```
-
----
-
-### Enviar mensaje
-
-Linux/macOS/Git Bash:
-
-```bash
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Hola Aletheia, recuerda que mi nombre es Aram.","use_memory":true}'
-```
-
-PowerShell:
-
-```powershell
-curl.exe -X POST http://localhost:8000/api/chat `
-  -H "Content-Type: application/json" `
-  -d "{\"message\":\"Hola Aletheia, recuerda que mi nombre es Aram.\",\"use_memory\":true}"
-```
-
----
-
-### Preguntar por memoria
-
-```powershell
-curl.exe -X POST http://localhost:8000/api/chat `
-  -H "Content-Type: application/json" `
-  -d "{\"message\":\"¿Cómo me llamo?\",\"use_memory\":true}"
-```
-
-Respuesta esperada:
-
-```txt
-Te llamas Aram.
-```
-
----
-
-### Consultar memoria
-
-```bash
-curl http://localhost:8000/api/memory
-```
-
----
-
-### Consultar estado emocional
-
-```bash
-curl http://localhost:8000/api/emotion
-```
-
----
-
-## 🧹 Problema común: dimensión de Qdrant
-
-Si cambiaste de vectores temporales a embeddings reales, puede aparecer este error:
-
-```txt
-Vector dimension error: expected dim: 64, got 768
-```
-
-Significa que Qdrant tenía una colección vieja creada con dimensión `64`, pero `nomic-embed-text` genera vectores de dimensión `768`.
-
-Solución:
-
-```bash
-curl -X DELETE http://localhost:6333/collections/aletheia_memory
-docker compose restart api
-```
-
-Luego vuelve a probar `/api/chat`.
-
----
-
-## 📚 Swagger y dashboard
-
-Swagger UI:
-
-```txt
-http://localhost:8000/docs
-```
-
-Dashboard de Qdrant:
-
-```txt
-http://localhost:6333/dashboard
-```
-
----
-
-## 🛠️ Comandos útiles
-
-```bash
-docker compose up -d --build
-docker compose down
-docker compose logs -f
-docker compose logs -f api
-docker compose restart api
+cd ~/Documentos/Aletheia
+export ALETHEIA_UID="$(id -u)"
+export ALETHEIA_GID="$(id -g)"
 docker compose ps
+curl -fsS http://127.0.0.1:8000/health
+stat -c '%U:%G %a %n' storage storage/goals.json 2>/dev/null || true
+stat -c '%U:%G %a %n' ~/.config/aletheia/desktop-agent-token
 ```
 
-Si usas `make`:
+Para comprobar que el token compartido autentica, ejecuta desde la raíz del proyecto:
 
 ```bash
-make up
-make down
-make logs
-make pull-model MODEL=llama3.2:3b
-make chat MSG="Hola Aletheia"
+TOKEN="$(cat ~/.config/aletheia/desktop-agent-token)"
+curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/apps
+unset TOKEN
 ```
 
----
+## Diagnóstico importante
 
+- Un `GET /health` del agente en `200` solo prueba que el proceso responde. No prueba que el token sea válido. La prueba real es `/v1/apps` autenticada.
+- Los logs aportados muestran que Qdrant recibe búsquedas y escrituras correctamente. No incluyen una excepción de `goals.json`, por lo que la causa exacta de una corrupción de contenido no queda demostrada por esos logs. La propiedad root/permiso 0600 sí es una causa muy plausible de que el usuario anfitrión no pueda abrir el archivo.
+- Si `goals.json` vuelve a contener JSON inválido después de aplicar esto, conserva el archivo `*.corrupt-*` y comparte salida de `stat storage storage/goals.json` y el mensaje exacto de `docker compose logs --tail=200 api`. No borres los respaldos.
+- Piper seguirá sin voz hasta que exista un modelo compatible en `models/piper` montado en `/app/models/piper`. El log confirma que `es_MX-claude-high.onnx` no está en esa ruta. No se puede corregir el modelo ausente con permisos o tokens.
+- El aviso GTK `font-antialiasing` y el aviso Wayland son del entorno gráfico de Electron; no explican la pérdida de memoria ni el timeout del LLM.
 
-## 🌱 Evolución: iniciativa autónoma y objetivos persistentes
+## Pruebas
 
-La aplicación incluye un ciclo local de iniciativa conversacional. No ejecuta acciones del sistema ni utiliza cámara o micrófono por sí solo: espera a que exista una conversación previa, respeta un periodo de inactividad y crea una sugerencia de baja presión.
-
-### Qué hace
-
-- Evalúa el silencio en segundo plano, sin necesitar una petición HTTP nueva.
-- Publica una iniciativa una sola vez en la interfaz; permite responder o descartarla.
-- Permite pausar y reanudar la iniciativa desde la interfaz.
-- Registra objetivos expresados explícitamente y los incorpora al contexto conversacional.
-- Puede retomar un objetivo después de un periodo de inactividad.
-- Persiste el estado de iniciativa y los objetivos mediante escritura JSON atómica.
-
-Los objetivos detectados a partir del lenguaje son heurísticos. Puedes añadirlos o completarlos manualmente desde el panel de la interfaz. Un objetivo registrado pertenece al usuario, no se interpreta como un deseo propio de Aletheia.
-
-### Configuración
-
-Estas variables son opcionales porque tienen valores predeterminados:
-
-```env
-INITIATIVE_AUTONOMY_ENABLED=true
-INITIATIVE_TICK_SECONDS=30
-INITIATIVE_IDLE_THRESHOLD_SECONDS=1800
-INITIATIVE_COOLDOWN_SECONDS=1800
-INITIATIVE_MAX_PENDING_ACTIONS=5
-GOAL_STATE_PATH=storage/goals.json
-GOAL_PROMPT_LIMIT=8
-```
-
-- `INITIATIVE_TICK_SECONDS`: frecuencia de evaluación del ciclo.
-- `INITIATIVE_IDLE_THRESHOLD_SECONDS`: inactividad mínima antes de una iniciativa.
-- `INITIATIVE_COOLDOWN_SECONDS`: tiempo mínimo entre iniciativas.
-- `INITIATIVE_AUTONOMY_ENABLED`: estado inicial del ciclo. También puede pausarse desde la interfaz.
-- `GOAL_STATE_PATH`: ruta local de los objetivos persistentes.
-
-Los tiempos son límites operativos ajustables, no valores psicológicos ni garantías sobre la frecuencia de conversación.
-
-### Endpoints nuevos
-
-| Método | Ruta | Uso |
-| --- | --- | --- |
-| `GET` | `/api/initiative/pending` | Consultar iniciativas espontáneas pendientes |
-| `POST` | `/api/initiative/{action_id}/delivered` | Confirmar que la interfaz mostró una iniciativa |
-| `POST` | `/api/initiative/{action_id}/dismiss` | Descartar una iniciativa |
-| `POST` | `/api/initiative/autonomy` | Pausar o reanudar la iniciativa con `{"enabled": true/false}` |
-| `GET` | `/api/goals` | Consultar objetivos |
-| `POST` | `/api/goals` | Añadir un objetivo con `description` y `priority` opcional |
-| `POST` | `/api/goals/{goal_id}/complete` | Marcar un objetivo como completado |
-
-### Pruebas
-
-Desde la raíz del proyecto:
-
-```bash
-pip install -r requirements-dev.txt
-pytest -q
-```
-
-Para validar la interfaz:
-
-```bash
-cd ui
-npm ci
-npm run lint
-npm run build
-```
-
-La API difiere la importación del cliente de Qdrant y de los motores de voz hasta que se solicitan esas funciones. Así, una comprobación de salud puede ejecutarse sin inicializar el almacenamiento vectorial ni cargar modelos de voz.
-
-## 🧭 Roadmap del MVP
-
-* [x] Crear estructura base del repositorio.
-* [x] Agregar Docker Compose.
-* [x] Levantar FastAPI.
-* [x] Conectar Ollama.
-* [x] Crear endpoint `/api/chat`.
-* [x] Agregar memoria en RAM.
-* [x] Conectar Qdrant.
-* [x] Agregar motor emocional básico.
-* [x] Agregar personalidad conversacional.
-* [x] Agregar embeddings con `nomic-embed-text`.
-* [x] Recuperar memoria semántica desde Qdrant.
-* [ ] Mejorar personalidad persistente.
-* [ ] Crear perfil de usuario.
-* [ ] Agregar STT con Vosk o Whisper.
-* [ ] Agregar TTS.
-* [ ] Agregar visión facial.
-* [ ] Crear UI local.
-* [ ] Agregar pruebas unitarias.
-* [ ] Agregar pruebas de integración.
-* [ ] Optimizar latencia.
-* [ ] Preparar empaquetado local.
-
----
-
-## 🌱 Filosofía del proyecto
-
-Aletheia no busca ser una simple API que devuelve texto.
-
-La idea es construir una IA local que pueda crecer poco a poco con el usuario: recordar, adaptarse, reaccionar, mejorar su tono y formar una personalidad propia dentro de límites técnicos claros.
-
-Este MVP es el primer cuerpo técnico de esa idea.
-
-Todavía no es una conciencia, ni pretende serlo.
-
-Pero sí es el inicio de una conversación más viva entre usuario, memoria, emoción simulada y modelos locales.
-
-Una chispa metida en un contenedor Docker. Nada mal para empezar.
-
----
-
-## 🧱 Nota de arquitectura
-
-El proyecto usa una separación por capas para evitar mezclar lógica de negocio, infraestructura y endpoints.
-
-La API no habla directamente con Qdrant ni con Ollama desde cualquier parte. En su lugar, se usan contratos e implementaciones concretas:
-
-```txt
-api → application → domain → infrastructure
-```
-
-Esto permite reemplazar piezas en el futuro sin romper todo el sistema.
-
-Por ejemplo:
-
-* Cambiar Ollama por llama.cpp.
-* Cambiar Qdrant por FAISS.
-* Cambiar el modelo de embeddings.
-* Agregar STT/TTS sin contaminar el caso de uso principal.
-* Persistir el estado emocional en base de datos.
-* Agregar una UI sin reescribir la lógica central.
-
----
-
-## 🧾 Commits recomendados
-
-Inicialización del proyecto:
-
-```bash
-git commit -m "chore: initialize Aletheia local MVP repository"
-```
-
-Corrección de dependencias:
-
-```bash
-git commit -m "fix: resolve httpx dependency conflict with ollama client"
-```
-
-Memoria y chat mejorado:
-
-```bash
-git commit -m "feat: improve chat endpoint and add in-memory conversation storage"
-```
-
-Memoria persistente:
-
-```bash
-git commit -m "feat: persist conversation memory with Qdrant"
-```
-
-Motor emocional:
-
-```bash
-git commit -m "feat: add emotional state engine and memory-aware chat prompt"
-```
-
-Embeddings:
-
-```bash
-git commit -m "feat: add Ollama embeddings for semantic memory retrieval"
-```
-
-Actualización del README:
-
-```bash
-git commit -m "docs: update README with local AI architecture and usage guide"
-```
-
----
-
-## 🧠 Nombre del proyecto
-
-**Aletheia** viene de la idea de revelar, recordar y traer algo a la luz.
-
-En este proyecto, esa idea se traduce en una IA local que usa memoria, contexto y conversación para responder de forma cada vez más cercana.
-
-La verdad no como piedra fría, sino como algo que se descubre hablando.
+El parche debe probarse en la máquina anfitriona con `npm run build` y `pytest`. No afirmamos que Electron esté validado en tu equipo hasta que esas pruebas y la verificación anterior pasen.

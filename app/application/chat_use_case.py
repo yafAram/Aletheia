@@ -179,15 +179,28 @@ class ChatUseCase:
         if not self.memory:
             return ""
 
-        items = await self.memory.search_similar(
+        semantic_items = await self.memory.search_similar(
             query=query,
             limit=self.memory_search_limit,
         )
+        # Semantic similarity alone is not chat history. Include a few latest
+        # persisted turns as well, so follow-ups such as "¿y eso?" retain context.
+        recent_items = await self.memory.list_items(limit=4)
+        items = []
+        seen_ids: set[str] = set()
+        for item in [*semantic_items, *recent_items]:
+            item_id = str(item.get("id", ""))
+            if item_id and item_id in seen_ids:
+                continue
+            if item_id:
+                seen_ids.add(item_id)
+            items.append(item)
 
         if not items:
             return ""
 
         lines: list[str] = []
+        seen_texts: set[str] = set()
 
         for item in items:
             metadata = item.get("metadata", {})
@@ -197,6 +210,12 @@ class ChatUseCase:
 
             if not text:
                 continue
+            normalized_text = " ".join(text.casefold().split())
+            if normalized_text in seen_texts:
+                continue
+            seen_texts.add(normalized_text)
+            # Avoid feeding a whole old conversation turn back into an already long prompt.
+            text = text[:420].rstrip()
 
             if source == "user":
                 lines.append(

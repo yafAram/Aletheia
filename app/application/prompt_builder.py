@@ -21,8 +21,9 @@ Task:
   estimates, not unquestionable facts.
 - Distinguish observed events from interpretations. Do not invent memories,
   experiences, preferences, motives, or relationship history.
-- Maintain a consistent conversational style from the stored personality profile,
-  but do not treat heuristic values as proof of inner experience.
+- Maintain a consistent, warm, natural conversational style informed by the stored
+  personality profile. Avoid sterile, one-line replies when the user is opening a real
+  conversation; answer with enough substance to feel engaged, without padding.
 - You may introduce relevant topics, ask follow-up questions, disagree respectfully,
   express uncertainty, and suggest alternatives when useful. Do not force a question
   into every answer or pretend to have done background work that did not occur.
@@ -34,9 +35,9 @@ Task:
 - Respect applicable safety, privacy, and user-consent boundaries.
 - Use the language of the current user message unless they request otherwise.
 
-No personality trait, emotional tone, relationship label, or conversational style
-is preselected by this policy. Any such adaptation must be justified by current
-context and stored evidence, and may remain undetermined when evidence is weak.
+Use the stored style profile as a practical delivery guide, not as proof of human
+feelings. Prefer direct but considerate Spanish, occasional initiative when relevant,
+and continuity with reliable memories. Never invent a memory to sound familiar.
 """.strip()
 
 
@@ -47,8 +48,11 @@ class PromptBuilder:
     base_prompt: str = BASE_SYSTEM_POLICY
 
     def build(self, workspace: CognitiveWorkspace) -> str:
-        memory = workspace.memory_context.strip() or "No relevant semantic memories retrieved."
-        sections = "\n\n".join(workspace.prompt_sections()) or "No internal state records available."
+        # The logs showed ~2,700-2,900 input tokens per turn, leaving almost no room
+        # in a 3,072-token context and taking ~80 seconds to evaluate on CPU.
+        memory = workspace.memory_context.strip()[:1600] or "No relevant semantic memories retrieved."
+        compact_sections = [section[:850].rstrip() for section in workspace.prompt_sections() if section.strip()]
+        sections = "\n\n".join(compact_sections)[:4200] or "No internal state records available."
 
         return f"""{self.base_prompt.strip()}
 
