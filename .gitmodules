@@ -1,0 +1,3 @@
+[submodule "finanzas/nexo_fiance"]
+	path = finanzas/nexo_fiance
+	url = https://github.com/yafAram/nexo_fiance.git
