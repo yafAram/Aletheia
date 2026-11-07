@@ -1,1 +1,59 @@
-# Agente de escritorio de Aletheia: primera fase\n\nEste módulo es un proceso local separado de la API principal. Es intencional: la API que corre en Docker no puede abrir ventanas ni capturar de forma fiable el escritorio del host. El agente se ejecuta en la sesión gráfica real de Windows o Linux.\n\n## Qué hace esta versión\n\n- Lista las aplicaciones autorizadas en `ALETHEIA_DESKTOP_ALLOWED_APPS`.\n- Abre únicamente alias incluidos en esa lista. No acepta comandos de shell libres y usa `subprocess.Popen(..., shell=False)`.\n- Abre URL HTTP/HTTPS en el navegador predeterminado.\n- Captura una imagen JPEG de la pantalla principal solo cuando se llama manualmente a `POST /v1/screen/capture`. No graba continuamente ni guarda la imagen en disco; devuelve base64 al cliente.\n- Protege las acciones con `Authorization: Bearer <token>` y falla cerrado si no hay token configurado.\n- Escucha en `127.0.0.1` por defecto.\n\nNo interpreta todavía la imagen con el modelo, no toma decisiones autónomas sobre el escritorio y no hace clics/teclado. Esas capacidades deben añadirse en una fase posterior con un planificador de herramientas, confirmaciones y verificación.\n\n## Instalación en Windows (PowerShell)\n\nDesde la raíz del repositorio:\n\n```powershell\npy -m venv .venv-desktop\n.\\.venv-desktop\\Scripts\\Activate.ps1\npython -m pip install -r desktop_agent\\requirements.txt\n$env:ALETHEIA_DESKTOP_TOKEN = [guid]::NewGuid().ToString() + [guid]::NewGuid().ToString()\n$env:ALETHEIA_DESKTOP_HOST = \"127.0.0.1\"\npython -m desktop_agent\n```\n\nAlias predeterminados Windows: `notepad`, `calculator`, `file_manager`. El navegador se abre mediante `/v1/browser/open`.\n\n## Instalación en Linux\n\nDesde la raíz del repositorio:\n\n```bash\npython3 -m venv .venv-desktop\nsource .venv-desktop/bin/activate\npython -m pip install -r desktop_agent/requirements.txt\nexport ALETHEIA_DESKTOP_TOKEN=\"$(python -c 'import secrets; print(secrets.token_urlsafe(48))')\"\nexport ALETHEIA_DESKTOP_HOST=127.0.0.1\npython -m desktop_agent\n```\n\nLos alias predeterminados son `notepad` (intenta `mousepad`), `calculator` (`gnome-calculator`) y `file_manager` (`xdg-open .`). Si no tienes esos programas, define tu lista explícita con `ALETHEIA_DESKTOP_ALLOWED_APPS` como JSON. Ejemplo:\n\n```bash\nexport ALETHEIA_DESKTOP_ALLOWED_APPS='{\"editor\":[\"code\"],\"files\":[\"thunar\"]}'\n```\n\nNo pongas comandos con `;`, tuberías o shell en esa configuración. Cada valor es una lista de argumentos ejecutados sin shell.\n\n## Pruebas rápidas\n\nCon el agente corriendo en la máquina anfitriona, en otra terminal:\n\n```bash\ncurl http://127.0.0.1:8765/health\ncurl -H \"Authorization: Bearer $ALETHEIA_DESKTOP_TOKEN\" http://127.0.0.1:8765/v1/apps\ncurl -X POST -H \"Authorization: Bearer $ALETHEIA_DESKTOP_TOKEN\" -H \"Content-Type: application/json\" -d '{\"app\":\"file_manager\"}' http://127.0.0.1:8765/v1/apps/open\ncurl -X POST -H \"Authorization: Bearer $ALETHEIA_DESKTOP_TOKEN\" http://127.0.0.1:8765/v1/screen/capture\n```\n\nEn PowerShell, usa `Invoke-RestMethod` y pasa el encabezado `Authorization = \"Bearer $env:ALETHEIA_DESKTOP_TOKEN\"`.\n\n## Seguridad y límites actuales\n\n- No expongas el puerto 8765 a Internet. Mantén `127.0.0.1` para las primeras pruebas.\n- No compartas el token ni lo guardes en el frontend. En la siguiente fase, la UI debe enviar las solicitudes a través de un canal local autenticado.\n- La captura es manual, de una sola imagen. Aún falta un indicador visual persistente en la UI, así que no habilites acceso remoto ni automatización de captura hasta que ese indicador y un botón de detener estén implementados.\n- La lista de aplicaciones es una política de permisos, no una lista de todo lo instalado.\n- No hay endpoint para comandos arbitrarios, terminal, escritura/borrado de archivos, teclado ni ratón.\n- Este agente es un primer bloque funcional, no la autonomía completa descrita para Aletheia.\n\n## Integración con la API existente\n\nNo se modifica `app/api/routes.py`, `ChatUseCase`, Qdrant, la personalidad, el vínculo, los objetivos ni el ciclo de iniciativa. La API y este agente se prueban por separado para no introducir regresiones en la conversación que ya funciona.\n
+# Agente de escritorio
+
+## Propósito
+Proceso local separado de la API principal. Se ejecuta en la sesión gráfica del host porque un contenedor no tiene acceso automático a las ventanas del usuario.
+
+## Rutas implementadas
+- GET /health: estado del proceso.
+- GET /v1/apps: lista alias permitidos (Bearer).
+- POST /v1/apps/open: abre alias permitido (Bearer).
+- POST /v1/browser/open: abre URL HTTP/HTTPS (Bearer).
+- POST /v1/screen/capture: captura manual JPEG de pantalla primaria (Bearer).
+
+La UI Electron actual integra health, listado y apertura de apps. Navegador y captura aún no están conectados al puente IPC.
+
+## Seguridad
+- Host default 127.0.0.1; puerto 8765.
+- Bearer token para acciones.
+- Token compartido normalmente en ~/.config/aletheia/desktop-agent-token.
+- Allowlist de alias y argumentos.
+- subprocess con shell=False.
+- No acepta comandos de shell, teclado o ratón arbitrarios.
+- Captura puntual; no graba ni guarda la imagen en disco.
+
+## Instalar
+
+Linux:
+~~~bash
+python3.11 -m venv .venv-desktop
+source .venv-desktop/bin/activate
+pip install -r desktop_agent/requirements.txt
+python -m desktop_agent
+~~~
+
+Windows PowerShell:
+~~~powershell
+py -3.11 -m venv .venv-desktop
+.\.venv-desktop\Scripts\Activate.ps1
+pip install -r desktop_agent\requirements.txt
+python -m desktop_agent
+~~~
+
+Dependencias: FastAPI, Uvicorn, mss y Pillow. Lumina intenta iniciar el agente desde .venv-desktop.
+
+## Allowlist
+~~~bash
+export ALETHEIA_DESKTOP_ALLOWED_APPS='{"editor":["code"],"files":["thunar"]}'
+~~~
+
+Cada valor es una lista de argumentos; no agregues shell ni comandos compuestos.
+
+## Comprobar
+~~~bash
+curl http://127.0.0.1:8765/health
+TOKEN="$(cat ~/.config/aletheia/desktop-agent-token)"
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/apps
+unset TOKEN
+~~~
+
+La captura requiere sesión gráfica y paquetes instalados. No es percepción visual continua. No expongas el agente a Internet ni a redes no confiables.
